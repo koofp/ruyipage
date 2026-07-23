@@ -25,3 +25,17 @@ venv/
 # IDE
 .idea/
 .vscode/
+
+# AI assistant directories
+.claude/
+.codex/
+
+# Temporary JS test files
+_js_syntax_*.js
+_tmp_js_*.js
+
+# Shortcuts
+*.lnk
+
+# Backup files
+*copy.py

@@ -38,7 +38,7 @@ def system_firefox_path():
     candidates = []
     if sys.platform == "win32":
         candidates.extend([
-            r"C:\Program Files\Mozilla Firefox\firefox.exe",
+            r"D:\EXED\10_brower\firefox\firefox.exe",
             r"C:\Program Files (x86)\Mozilla Firefox\firefox.exe",
         ])
         found = shutil.which("firefox.exe") or shutil.which("firefox")

@@ -29,7 +29,7 @@ from ruyipage import launch
 
 def main():
     test_page = BASE_DIR / "test_pages" / "xpath_picker_complex_showcase.html"
-    file_url = test_page.resolve().as_uri()
+    file_url = "https://signup.live.com/"
 
     page = launch(
         headless=False,

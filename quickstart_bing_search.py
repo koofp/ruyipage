@@ -5,7 +5,7 @@ from ruyipage import FirefoxOptions, FirefoxPage, Keys
 
 opts = FirefoxOptions()
 # 如果 Firefox 不在默认安装目录，可以取消注释并指定路径。
-# opts.set_browser_path(r"D:\Firefox\firefox.exe")
+# opts.set_browser_path(r"D:\EXED\10_brower\firefox\firefox.exe")
 
 # 如果你想复用登录状态、Cookie、扩展，可以取消注释并指定 userdir。
 # opts.set_user_dir(r"D:\ruyipage_userdir")

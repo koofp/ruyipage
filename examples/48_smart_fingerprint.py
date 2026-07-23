@@ -67,13 +67,13 @@ from ruyipage import (
 # =============================================================
 
 # Firefox 可执行文件路径
-BROWSER_PATH = r"C:\Program Files\Mozilla Firefox\firefox.exe"
+BROWSER_PATH = r"D:\EXED\10_brower\firefox\firefox.exe"
 
 # 代理配置（直连就把 PROXY_HOST 改成 None）
 PROXY_HOST = "127.0.0.1"
-PROXY_PORT = 7890
-PROXY_USER = None       # 无密码代理留 None
-PROXY_PWD = None
+PROXY_PORT = 7897
+PROXY_USER = "sk-hxs2019"       # 无密码代理留 None
+PROXY_PWD = "KR"
 
 # 出口 IP 国家校验（None = 不校验）
 REQUIRE_COUNTRY = None
