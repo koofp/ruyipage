@@ -1,7 +1,7 @@
 import random
 import time
 from ruyipage import FirefoxOptions, FirefoxPage
-
+from utils import generate_strong_password,random_email,randomDayAndMonthAndYear,generate_name
 # proxies = [
 # "gate.kookeey.info:1000:9309087-e0061b49f2:e954d2bfe3-GB-17303897",
 # "gate.kookeey.info:1000:9309087-e0061b49f2:e954d2bfe3-GB-01631188",
@@ -22,6 +22,10 @@ from ruyipage import FirefoxOptions, FirefoxPage
 # ctx.apply_emulation(page)
 # page.get("https://signup.live.com/")
 
+REG_EMAIL = f"{random_email()}@outlook.com"
+REG_PASSWORD = generate_strong_password()
+PROXY = "http://127.0.0.1:7897"  # 注册与 Graph token 提取共用代理
+
 opts = FirefoxOptions()
 
 # 链式调用，逐个配置
@@ -30,10 +34,7 @@ opts.set_port(12000)
 opts.headless(False)
 opts.set_window_size(1440, 900)
 opts.set_human_algorithm("windmouse")
-# @
-opts.set_proxy("http://127.0.0.1:7897")
-# opts.set_proxy("http://d2494304000-res-country-gb-session-3474893000-sessiontime-28:F9bRyUCW@gate.ipdeep.com:8080")
-# opts.set_proxy("http://gate.kookeey.info:1000")
+opts.set_proxy(PROXY)
 
 opts.private_mode(False)
 opts.close_on_exit(False)
@@ -47,7 +48,7 @@ page.get("https://signup.live.com/", wait="complete")
 page.wait(0.8)
 
 # 输入邮箱
-page.actions.human_move(page.ele("#floatingLabelInput4"), algorithm="windmouse").human_click().human_type("hxx2d0t1t9060455@outlook.com").perform()
+page.actions.human_move(page.ele("#floatingLabelInput4"), algorithm="windmouse").human_click().human_type(REG_EMAIL).perform()
 page.wait(0.6)
 
 # 账号点击下一步
@@ -61,7 +62,7 @@ page.wait(0.7)
 # page 已经是 FirefoxPage / FirefoxTab 实例
 passwordBtn = page.ele("xpath://*[@id=\"floatingLabelInput13\"]")
 # CSS 备选: #floatingLabelInput13
-page.actions.human_move(passwordBtn, algorithm="windmouse").human_click().human_type("asdkja23sd124g67&").perform()
+page.actions.human_move(passwordBtn, algorithm="windmouse").human_click().human_type(REG_PASSWORD).perform()
 page.wait(0.8)
 
 # password点击下一步
@@ -80,7 +81,7 @@ page.actions.human_move(mouth, algorithm="windmouse").human_click().perform()
 page.wait(0.6)
 
 roleMouth = page.eles("xpath://div[@role=\"option\"]")
-page.actions.human_move(roleMouth[0], algorithm="windmouse").human_click().perform()
+page.actions.human_move(roleMouth[randomDayAndMonthAndYear("month")], algorithm="windmouse").human_click().perform()
 page.wait(0.5)
 
 
@@ -90,13 +91,13 @@ day = page.ele("xpath://*[@id=\"BirthDayDropdown\"]")
 page.actions.human_move(day, algorithm="windmouse").human_click().perform()
 page.wait(0.7)
 roleMouth = page.eles("xpath://div[@role=\"option\"]")
-page.actions.human_move(roleMouth[0], algorithm="windmouse").human_click().perform()
+page.actions.human_move(roleMouth[randomDayAndMonthAndYear("day")], algorithm="windmouse").human_click().perform()
 page.wait(0.6)
 
 # year
 year = page.ele("xpath://*[@id=\"floatingLabelInput24\"]")
 # CSS 备选: #floatingLabelInput24
-page.actions.human_move(year, algorithm="windmouse").human_click().human_type("1989").perform()
+page.actions.human_move(year, algorithm="windmouse").human_click().human_type(randomDayAndMonthAndYear("year")).perform()
 page.wait(0.8)
 
 # 角色信息下一步
@@ -106,17 +107,17 @@ page.actions.human_move(roleProfileNext, algorithm="windmouse").human_click().pe
 page.wait(0.6)
 
 
-
+first_name, last_name = generate_name()
 # first name
 firstName = page.ele("xpath://*[@id=\"firstNameInput\"]")
 # CSS 备选: #firstNameInput
-page.actions.human_move(firstName, algorithm="windmouse").human_click().human_type("mili").perform()
+page.actions.human_move(firstName, algorithm="windmouse").human_click().human_type(first_name).perform()
 page.wait(0.8)
 
 # last name
 lastname = page.ele("xpath://div[1]/div[2]/div[1]/span[1]")
 # CSS 备选: div[data-testid="lastNameInput"] > div.fui-Field.___1noo6zn > span.fui-Input.r1oeeo9n
-page.actions.human_move(lastname, algorithm="windmouse").human_click().human_type("jake").perform()
+page.actions.human_move(lastname, algorithm="windmouse").human_click().human_type(last_name).perform()
 
 # name点击下一步
 nameNext = page.ele("xpath://button[@data-testid=\"primaryButton\"]")
@@ -208,7 +209,7 @@ if not btnIframe_visible:
     exit(1)
 
 
-page.wait(5)
+page.wait(2)
 
 
 # 看看 #px-captcha 是什么标签，里面有什么
@@ -604,3 +605,13 @@ return {buttonPresent: !!button, buttonText: button ? String(button.textContent 
         print("PX requested a retry.")
         break
 print("PX verification handling complete; continuing registration flow...")
+# ── 保存注册结果 ──
+from getAccountData import save_account_data
+try:
+    result = save_account_data(page, REG_EMAIL, REG_PASSWORD, proxy=PROXY)
+    print(f"[FirefoxOptions] 账号保存结果: {result}")
+finally:
+    try:
+        page.quit()
+    except Exception as exc:
+        print(f"[FirefoxOptions] page.quit failed: {type(exc).__name__}: {exc}")

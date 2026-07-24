@@ -39,3 +39,10 @@ _tmp_js_*.js
 
 # Backup files
 *copy.py
+
+# 不上传账号
+ruyipagebyTools/preposition/_outlook_pool
+
+ruyipagebyTools/preposition/emails.txt
+
+ruyipagebyTools/preposition/outlook_no_graph.txt
