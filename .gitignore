@@ -41,8 +41,8 @@ _tmp_js_*.js
 *copy.py
 
 # 不上传账号
-ruyipagebyTools/preposition/_outlook_pool
+ruyipagebyTools/outlookregister/_outlook_pool
 
-ruyipagebyTools/preposition/emails.txt
+ruyipagebyTools/outlookregister/emails.txt
 
-ruyipagebyTools/preposition/outlook_no_graph.txt
+ruyipagebyTools/outlookregister/outlook_no_graph.txt
