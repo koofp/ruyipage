@@ -1,5 +1,7 @@
+import ctypes
 import random
 import time
+from ctypes import wintypes
 from ruyipage import FirefoxOptions, FirefoxPage
 from utils import generate_strong_password,random_email,randomDayAndMonthAndYear,generate_name
 # proxies = [
@@ -189,16 +191,13 @@ if not humanCaptchaIframe:
 
 
 
-
 btnIframe_visible = False
 for _ in range(35):
     btnIframe_visible = humanCaptchaIframe.run_js("""
-        var p = document.getElementById('px-captcha');
-        var f = p ? p.querySelector('iframe') : null;                                 
-        if (!f) return false;
-        var display = window.getComputedStyle(f).display;
-        return display !== 'none';
-    """, as_expr=False)
+    var px = document.getElementById('px-captcha');
+    var f = px ? px.querySelector('iframe') : null;
+    return f && f.contentWindow !== null;
+""", as_expr=False)
     if btnIframe_visible:
         break
     print("等待 btnIframe_visible 显示...")
@@ -209,7 +208,7 @@ if not btnIframe_visible:
     exit(1)
 
 
-page.wait(2)
+page.wait(1)
 
 
 # 看看 #px-captcha 是什么标签，里面有什么
@@ -219,8 +218,8 @@ px_info = humanCaptchaIframe.run_js("""
     return {
         tag: px.tagName,
         children: px.children.length,
-        childTags: Array.from(px.children).map(function(c) { 
-            return {tag: c.tagName, id: c.id || '', role: c.getAttribute('role') || ''}; 
+        childTags: Array.from(px.children).map(function(c) {
+            return {tag: c.tagName, id: c.id || '', role: c.getAttribute('role') || ''};
         }),
         hasShadowRoot: !!px.shadowRoot,
         innerHTML_size: px.innerHTML.length,
@@ -228,21 +227,6 @@ px_info = humanCaptchaIframe.run_js("""
 """, as_expr=False)
 print(f"#px-captcha 结构: {px_info}")
 
-
-btnIframe111_visible = False
-for _ in range(30):
-    btnIframe111_visible = humanCaptchaIframe.run_js("""
-    var px = document.getElementById('px-captcha');
-    var f = px ? px.querySelector('iframe') : null;
-    return f && f.contentWindow !== null;
-""", as_expr=False)
-    if btnIframe111_visible:
-        break
-    print("等待 #px-captcha iframe 加载完成...")
-    time.sleep(1)
-if not btnIframe111_visible:
-    print("❌ btnIframe111_visible 35 秒后仍未显示，脚本终止")
-    exit(1)
 
 # 循环通过后，额外等 1 秒让 BiDi context tree 同步
 page.wait(3)
@@ -267,25 +251,7 @@ if not btnIframe:
 
 print(f"btnIframe {btnIframe} (visible_idx={visible_idx})")
 
-
-# 看看这个 PerimeterX iframe 里面有什么按钮
-px_inner = btnIframe.run_js("""
-    var btns = document.querySelectorAll('div[role="button"], button, [aria-label*="hold"], [aria-label*="press"], [aria-label*="Hold"], [aria-label*="Press"]');
-    var result = [];
-    for (var i = 0; i < btns.length; i++) {
-        result.push({
-            tag: btns[i].tagName,
-            role: btns[i].getAttribute('role') || '',
-            ariaLabel: btns[i].getAttribute('aria-label') || '',
-            text: btns[i].textContent.trim().substring(0, 50),
-            display: window.getComputedStyle(btns[i]).display,
-        });
-    }
-    return result;
-""", as_expr=False)
-print(f"PerimeterX 内部按钮: {px_inner}")
-
-# PX probe, hover activation, hitbox discovery, native hold, and status polling.
+# PX probe — detect elements, then native hold via SendInput
 probe_js = r"""
 (function() {
     "use strict";
@@ -414,7 +380,7 @@ center_hit = probe_result.get("centerHit") or {}
 print("centerHit: tag={} role={} id={} text={!r} point={}".format(center_hit.get("tag", ""), center_hit.get("role", ""), center_hit.get("id", ""), center_hit.get("text", ""), center_hit.get("point", {})))
 candidates = probe_result.get("challengeCandidates") or []
 for i, candidate in enumerate(candidates[:8]):
-    print("  {}. score={} tag={} role={} id={} text={!r} css={}".format(i + 1, candidate.get("score"), candidate.get("tag"), candidate.get("role"), candidate.get("id"), candidate.get("text"), candidate.get("css")))
+    print("  {}. score={} tag={} role={} id={} text={!r} css={}".format(i + 1, candidate.get("score"), candidate.get("tag"), candidate.get("role"), candidate.get("id"), (candidate.get("text") or "")[:50], candidate.get("css")))
 if not candidates:
     print("No PX challenge candidates were found; stopping.")
     exit(1)
@@ -424,100 +390,33 @@ if not btn_css:
     print("The best PX candidate has no usable CSS selector; stopping.")
     exit(1)
 
-import ctypes
-from ctypes import wintypes
 user32 = ctypes.windll.user32
-class POINT(ctypes.Structure):
-    _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
-
-# Move the OS pointer into the outer PX iframe to allow genuine hover-driven layout.
-center_is_control = center_hit.get("tag") in ("button", "input", "canvas") or center_hit.get("role") in ("button", "checkbox", "switch", "slider")
-px_outer = humanCaptchaIframe.run_js("""
-var px = document.getElementById('px-captcha');
-var frame = px ? px.querySelector('iframe') : null;
-if (!frame) return null;
-var rect = frame.getBoundingClientRect();
-return {x: rect.x, y: rect.y, w: rect.width, h: rect.height};
-""", as_expr=False)
-hu_off = page.run_js("""
-var human = document.getElementById('human');
-var frame = human ? human.querySelector('iframe') : null;
-if (!frame) return null;
-var rect = frame.getBoundingClientRect();
-return {x: rect.x, y: rect.y};
-""", as_expr=False)
-vs = page.run_js("return {x: window.mozInnerScreenX, y: window.mozInnerScreenY}", as_expr=False)
-if not center_is_control and px_outer and px_outer.get("w", 0) > 0 and px_outer.get("h", 0) > 0 and hu_off:
-    old_point = POINT()
-    user32.GetCursorPos(ctypes.byref(old_point))
-    hover_sx = vs["x"] + px_outer["x"] + px_outer["w"] / 2 + hu_off["x"]
-    hover_sy = vs["y"] + px_outer["y"] + px_outer["h"] / 2 + hu_off["y"]
-    print("Pre-hovering PX iframe at screen ({}, {})".format(int(hover_sx), int(hover_sy)))
-    user32.SetCursorPos(int(hover_sx), int(hover_sy))
-    time.sleep(2)
-    user32.SetCursorPos(int(old_point.x), int(old_point.y))
-
-# Poll candidate and ancestors for the first visible, hit-tested non-root interaction box.
-safe_btn_css = btn_css.replace('\\', '\\\\').replace("'", "\\'")
+# Use #px-captcha DIV container rect (always available, unlike the dynamic button rect)
+skip_px_offset = True
 hitbox = None
-for attempt in range(60):
-    hitbox = btnIframe.run_js("""
-var selector = '""" + safe_btn_css + """';
-var el = document.querySelector(selector);
-if (!el) return null;
-var current = el;
-var level = 0;
-while (current && current.nodeType === 1) {
-    var tag = String(current.tagName || '').toLowerCase();
-    var style = window.getComputedStyle(current);
-    var rect = current.getBoundingClientRect();
-    if (rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.pointerEvents !== 'none') {
-        var cx = rect.x + rect.width / 2;
-        var cy = rect.y + rect.height / 2;
-        var hits = typeof document.elementsFromPoint === 'function' ? document.elementsFromPoint(cx, cy) : [];
-        var verified = false;
-        var i;
-        for (i = 0; i < hits.length; i += 1) {
-            var hit = hits[i];
-            if (hit === el || hit === current || el.contains(hit) || hit.contains(el)) { verified = true; break; }
-        }
-        if (verified) return {x: rect.x, y: rect.y, w: rect.width, h: rect.height, cx: cx, cy: cy, level: level, tag: tag};
-    }
-    current = current.parentElement;
-    level += 1;
-}
-return null;
+px_div = humanCaptchaIframe.run_js("""
+    var el = document.getElementById('px-captcha');
+    if (!el) return null;
+    var r = el.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0) return null;
+    return {x: r.x, y: r.y, w: r.width, h: r.height};
 """, as_expr=False)
-    if hitbox and hitbox.get("w", 0) > 0 and hitbox.get("h", 0) > 0:
-        break
-    time.sleep(0.5)
-skip_px_offset = False
-if not hitbox or hitbox.get("w", 0) <= 0 or hitbox.get("h", 0) <= 0:
-    # Fallback: use the #px-captcha DIV container rect (in humanCaptchaIframe).
-    px_div = humanCaptchaIframe.run_js("""
-        var el = document.getElementById('px-captcha');
-        if (!el) return null;
-        var r = el.getBoundingClientRect();
-        if (r.width <= 0 || r.height <= 0) return null;
-        return {x: r.x, y: r.y, w: r.width, h: r.height};
-    """, as_expr=False)
-    if px_div and px_div.get("w", 0) > 0 and px_div.get("h", 0) > 0:
-        hitbox = {
-            "x": px_div["x"],
-            "y": px_div["y"] + px_div["h"] * 0.48,
-            "w": px_div["w"],
-            "h": px_div["h"] * 0.12,
-            "cx": px_div["x"] + px_div["w"] / 2,
-            "cy": px_div["y"] + px_div["h"] * 0.54,
-        }
-        skip_px_offset = True
-        print("PX hitbox: fallback #px-captcha DIV container rect=({},{},{}x{})".format(
-            px_div["x"], px_div["y"], px_div["w"], px_div["h"]))
-    else:
-        print("No verified PX hitbox appeared within 30 seconds; stopping.")
-        exit(1)
+if px_div and px_div.get("w", 0) > 0 and px_div.get("h", 0) > 0:
+    hitbox = {
+        "x": px_div["x"],
+        "y": px_div["y"] + px_div["h"] * 0.48,
+        "w": px_div["w"],
+        "h": px_div["h"] * 0.12,
+        "cx": px_div["x"] + px_div["w"] / 2,
+        "cy": px_div["y"] + px_div["h"] * 0.54,
+    }
+    print("PX hitbox: #px-captcha container rect=({},{},{}x{})".format(
+        px_div["x"], px_div["y"], px_div["w"], px_div["h"]))
+else:
+    print("No PX hitbox available; stopping.")
+    exit(1)
 btn_cx, btn_cy = hitbox["cx"], hitbox["cy"]
-print("PX hitbox: tag={} level={} rect=({}, {}, {}x{}) center=({}, {})".format(hitbox.get("tag"), hitbox.get("level"), hitbox["x"], hitbox["y"], hitbox["w"], hitbox["h"], btn_cx, btn_cy))
+print("PX hitbox center=({}, {})".format(btn_cx, btn_cy))
 
 # Re-read offsets after the hover wait, then form the absolute OS screen target.
 px_off = humanCaptchaIframe.run_js("""
