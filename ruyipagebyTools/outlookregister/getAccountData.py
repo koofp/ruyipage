@@ -128,12 +128,19 @@ def _extract_graph_for_account(email, password, proxy=None, attempts=3):
     """按 reg-factory 的 3 次退避策略提取 Graph refresh token。"""
     for attempt in range(attempts):
         try:
-            graph = get_graph_token(email, password, proxy=proxy)
+            if proxy:
+                os.environ["HTTP_PROXY"] = str(proxy)
+                os.environ["HTTPS_PROXY"] = str(proxy)
+            graph = get_graph_token(email, password)
         except Exception as exc:
             graph = None
             print("[getAccountData] graph token attempt {}/{} error: {}: {}".format(
                 attempt + 1, attempts, type(exc).__name__, exc
             ))
+        finally:
+            if proxy:
+                os.environ.pop("HTTP_PROXY", None)
+                os.environ.pop("HTTPS_PROXY", None)
 
         if graph and graph.get("refresh_token"):
             return graph
@@ -151,7 +158,7 @@ def _extract_graph_for_account(email, password, proxy=None, attempts=3):
 # ---------------------------------------------------------------------------
 # 主入口
 # ---------------------------------------------------------------------------
-def save_account_data(page, email, password, output_dir=None, proxy=None):
+def save_account_data(page, email, password, proxy=None, output_dir=None):
     """保存注册成功的 Outlook 账号数据。
 
     Args:

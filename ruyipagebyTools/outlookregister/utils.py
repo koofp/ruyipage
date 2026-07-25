@@ -47,9 +47,9 @@ def generate_name():
 # 获取日期
 def randomDayAndMonthAndYear(choice):
     if choice == "day":
-        return random.randint(1,28) 
+        return random.randint(0,27) 
     elif choice =="month":
-        return random.randint(1,12)
+        return random.randint(0,11)
     elif choice == "year":
         return random.randint(1970, 2005)
     else:
