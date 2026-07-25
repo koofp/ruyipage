@@ -1,8 +1,3 @@
-import random
-import time
-import ctypes
-from ctypes import wintypes
-
 from config import Settings, create_page
 from utils import generate_strong_password, random_email, randomDayAndMonthAndYear, generate_name
 from register_flow import fill_form
@@ -30,7 +25,9 @@ try:
               first_name, last_name, _birth_month, _birth_day, _birth_year)
 
     # ── PX 人机验证 ──
-    handle_captcha(page)
+    if not handle_captcha(page):
+        print("[FirefoxOptions] PX captcha failed, skipping account save")
+        exit(1)
 
     # ── 保存账号数据 ──
     result = save_account_data(page, REG_EMAIL, REG_PASSWORD, proxy=PROXY)

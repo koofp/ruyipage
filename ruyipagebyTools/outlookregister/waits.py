@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """ifram / element wait helpers"""
 import time
-import sys
 
 
 def wait_for_human_iframe(page, timeout: int = 35) -> bool:
@@ -71,11 +70,18 @@ def get_visible_px_iframe(humanCaptchaIframe):
     return frame, visible_idx
 
 
-def poll_px_result(page, btnIframe, rounds: int = 6) -> str:
-    """轮询 PX 验证结果。返回 "passed" / "loading" / "retry" / "timeout"。"""
+def poll_px_result(page, humanCaptchaIframe, rounds: int = 6) -> str:
+    """轮询 PX 验证结果。PX 可能在按压后销毁/重建 iframe，此函数自行刷新引用。
+       返回 "passed" / "loading" / "retry" / "timeout"。
+       传入 page 和 #human 层的 humanCaptchaIframe（不直接传 btnIframe）。"""
+    btnIframe = None
     for rnd in range(rounds):
         time.sleep(3)
         try:
+            btnIframe, _ = get_visible_px_iframe(humanCaptchaIframe)
+            if not btnIframe:
+                print("r{}: cannot re-get visible PX iframe, retrying".format(rnd + 1))
+                continue
             st = btnIframe.run_js("""
             var b = document.querySelector("[role='button']");
             var ld = document.querySelector(".fetching-volume.draw, [role='status'], .draw");
@@ -98,6 +104,34 @@ def poll_px_result(page, btnIframe, rounds: int = 6) -> str:
             return "loading"
         if st.get("a"):
             return "retry"
+        if st.get("p"):
+            # PX button is still present without loading/retry hints —
+            # treat as implicit retry: PX reset the button, wants another press.
+            return "retry"
         print("r{}: pressed={} loading={} retry={}".format(
             rnd + 1, st.get("p"), st.get("l"), st.get("a")))
     return "timeout"
+
+
+def is_px_done(btnIframe) -> bool:
+    """检查 PX 验证是否完成（loading/draw 动画出现 = 进度条走满）。"""
+    try:
+        result = btnIframe.run_js("""
+        var ld = document.querySelector(".fetching-volume.draw, .draw");
+        return !!ld;
+        """, as_expr=False)
+        return bool(result)
+    except Exception:
+        return True  # frame 消失 = 验证通过
+
+
+def px_btn_visible(btnIframe) -> bool:
+    """检查 PX 按压按钮是否仍在页面上。"""
+    try:
+        result = btnIframe.run_js("""
+        var btn = document.querySelector("[role='button']");
+        return !!btn;
+        """, as_expr=False)
+        return bool(result)
+    except Exception:
+        return False

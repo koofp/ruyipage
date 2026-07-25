@@ -1,14 +1,16 @@
 # -*- coding: utf-8 -*-
 """PX captcha handler: orchestrate full press-and-hold verification flow"""
 
+import ctypes
 import time
-import sys
 
 from ruyipage import FirefoxPage
 
+user32 = ctypes.windll.user32
+
 from waits import (wait_for_human_iframe, get_human_iframe_context,
                    wait_for_px_captcha_iframe, get_visible_px_iframe,
-                   poll_px_result)
+                   poll_px_result, is_px_done)
 from px_probe import probe_context, get_hitbox
 from win32_mouse import screen_coords, native_hold
 
@@ -36,7 +38,7 @@ def _get_offsets(page, humanCaptchaIframe) -> tuple[dict, dict, dict]:
 
 
 def handle_captcha(page: FirefoxPage) -> bool:
-    """完整 PX 验证流程。返回 True=通过, False=失败。"""
+    """完整 PX 验证流程（含重试）。返回 True=通过, False=失败。"""
 
     # ── 1. wait for #human iframe ──
     if not wait_for_human_iframe(page):
@@ -76,31 +78,57 @@ def handle_captcha(page: FirefoxPage) -> bool:
         print("No PX challenge candidates found; stopping.")
         return False
     top = candidates[0]
-    print("PX probe: {} elements, top candidate score={} id={} text={!r}".format(
+    print("PX probe: {} elements, top score={} id={} text={!r}".format(
         probe.get("elementCount", 0), top.get("score"), top.get("id"),
         (top.get("text") or "")[:50]))
 
-    # ── 5. get hitbox from #px-captcha container ──
-    hitbox = get_hitbox(humanCaptchaIframe)
-    if not hitbox:
-        print("No PX hitbox available; stopping.")
+    # ── 5. pre-hover cursor into #px-captcha area ──
+    _, hu_off, vs = _get_offsets(page, humanCaptchaIframe)
+    pre_hitbox = get_hitbox(humanCaptchaIframe)
+    if pre_hitbox:
+        pre_sx = int(vs["x"] + pre_hitbox["cx"] + hu_off["x"])
+        pre_sy = int(vs["y"] + pre_hitbox["cy"] + hu_off["y"])
+        print("Pre-hover PX at screen ({}, {})".format(pre_sx, pre_sy))
+        user32.SetCursorPos(pre_sx, pre_sy)
+        time.sleep(2)
+
+    # ── 6-8. press + poll + retry loop ──
+    for attempt in range(3):
+        hitbox = get_hitbox(humanCaptchaIframe)
+        if not hitbox:
+            print("PX hitbox unavailable (attempt {}/3)".format(attempt + 1))
+            time.sleep(3)
+            continue
+
+        btn_cx, btn_cy = hitbox["cx"], hitbox["cy"]
+        print("attempt {}/3: hitbox center=({}, {})".format(
+            attempt + 1, btn_cx, btn_cy))
+
+        px_off, hu_off, vs = _get_offsets(page, humanCaptchaIframe)
+        sx, sy = screen_coords(btn_cx, btn_cy, px_off, hu_off, vs, skip_px_offset=True)
+        print("screen=({}, {})".format(sx, sy))
+
+        # Capture the current btnIframe reference before pressing.
+        # PX may recreate the iframe after each attempt, so we also
+        # re-fetch it *after* the hold when polling.
+        _current_btnIframe = btnIframe
+        native_hold(sx, sy, min_seconds=12.0, max_seconds=15.0,
+                    is_done=lambda: is_px_done(_current_btnIframe))
+
+        result = poll_px_result(page, humanCaptchaIframe)
+        print("PX result: {}".format(result))
+        if result in ("passed", "loading"):
+            return True
+        if result == "retry":
+            print("PX requested retry ({}/3), waiting 3s...".format(attempt + 1))
+            time.sleep(3)
+            # Before the next attempt, refresh the PX iframe reference.
+            new_btn, _ = get_visible_px_iframe(humanCaptchaIframe)
+            if new_btn:
+                btnIframe = new_btn
+                print("btnIframe refreshed for retry: {}".format(btnIframe))
+            continue
         return False
 
-    btn_cx, btn_cy = hitbox["cx"], hitbox["cy"]
-    print("PX hitbox center=({}, {}), rect=({}, {}, {}x{})".format(
-        btn_cx, btn_cy, hitbox["x"], hitbox["y"], hitbox["w"], hitbox["h"]))
-
-    # ── 6. coordinates → screen absolute ──
-    px_off, hu_off, vs = _get_offsets(page, humanCaptchaIframe)
-    sx, sy = screen_coords(btn_cx, btn_cy, px_off, hu_off, vs, skip_px_offset=True)
-    print("viewport=({:.1f}, {:.1f}) screen=({}, {})".format(
-        btn_cx + hu_off["x"], btn_cy + hu_off["y"], sx, sy))
-
-    # ── 7. native mouse hold ──
-    print("LEFTDOWN (native hold 11s)")
-    native_hold(sx, sy, hold_seconds=11.0)
-
-    # ── 8. poll result ──
-    result = poll_px_result(page, btnIframe)
-    print("PX result: {}".format(result))
-    return result in ("passed", "loading")
+    print("PX failed after 3 attempts")
+    return False

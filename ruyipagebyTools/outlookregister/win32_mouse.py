@@ -49,9 +49,13 @@ def screen_coords(btn_cx: float, btn_cy: float,
     return sx, sy
 
 
-def native_hold(sx: int, sy: int, hold_seconds: float = 11.0,
-                jitter_px: int = 2):
-    """在 (sx, sy) 按住左键 hold_seconds 秒，期间随机微抖。"""
+def native_hold(sx: int, sy: int,
+                min_seconds: float = 12.0,
+                max_seconds: float = 15.0,
+                jitter_px: int = 2,
+                is_done=None):
+    """在 (sx, sy) 按住左键 12-15 秒（随机），期间微抖。
+       is_done: callable → bool，返回 True 时提前松手（120-360ms 反应延迟后）。"""
     import random
     import time
 
@@ -62,12 +66,26 @@ def native_hold(sx: int, sy: int, hold_seconds: float = 11.0,
     if _send_mouse(MOUSEEVENTF_LEFTDOWN) != 1:
         raise ctypes.WinError(ctypes.get_last_error())
 
-    hold_until = time.time() + hold_seconds
+    hold_duration = random.uniform(min_seconds, max_seconds)
+    hold_until = time.time() + hold_duration
+    last_check = time.time()
+    check_interval = 2.0
+
     while time.time() < hold_until:
         user32.SetCursorPos(
             sx + random.randint(-jitter_px, jitter_px),
             sy + random.randint(-jitter_px, jitter_px),
         )
         time.sleep(random.uniform(0.08, 0.35))
+
+        # 动态提前释放：进度条走满就松手
+        if is_done and (time.time() - last_check) > check_interval:
+            last_check = time.time()
+            try:
+                if is_done():
+                    time.sleep(random.uniform(0.12, 0.36))
+                    break
+            except Exception:
+                pass
 
     _send_mouse(MOUSEEVENTF_LEFTUP)
