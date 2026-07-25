@@ -1,0 +1,103 @@
+# -*- coding: utf-8 -*-
+"""ifram / element wait helpers"""
+import time
+import sys
+
+
+def wait_for_human_iframe(page, timeout: int = 35) -> bool:
+    """等待 #human 里的验证 iframe 变为可见。"""
+    for _ in range(timeout):
+        visible = page.run_js("""
+        var p = document.getElementById('human');
+        var f = p ? p.querySelector('iframe') : null;
+        return f && f.style.display !== 'none';
+        """, as_expr=False)
+        if visible:
+            return True
+        print("等待 iframe 显示...")
+        time.sleep(1)
+    return False
+
+
+def get_human_iframe_context(page):
+    """拿到 #human iframe 的 FirefoxFrame 上下文。失败返回 None。"""
+    captcha = page.ele("#human", timeout=5)
+    if not captcha:
+        print("❌ #human 不存在")
+        return None
+    iframe_count = page.run_js("""
+        var p = document.getElementById('human');
+        return p ? p.querySelectorAll('iframe').length : -1;
+    """, as_expr=False)
+    if not iframe_count:
+        print("❌ #human 内无 iframe")
+        return None
+    frame = page.get_frame("css:#human iframe[data-testid='humanCaptchaIframe']")
+    if not frame:
+        print("❌ get_frame 返回 None")
+    return frame
+
+
+def wait_for_px_captcha_iframe(humanCaptchaIframe, timeout: int = 35) -> bool:
+    """在 humanCaptchaIframe 内等 #px-captcha iframe 加载完成。"""
+    for _ in range(timeout):
+        ready = humanCaptchaIframe.run_js("""
+        var px = document.getElementById('px-captcha');
+        var f = px ? px.querySelector('iframe') : null;
+        return f && f.contentWindow !== null;
+        """, as_expr=False)
+        if ready:
+            return True
+        print("等待 btnIframe_visible 显示...")
+        time.sleep(1)
+    return False
+
+
+def get_visible_px_iframe(humanCaptchaIframe):
+    """取 humanCaptchaIframe 下第一个可见的 child context。返回 (frame, idx)。"""
+    visible_idx = humanCaptchaIframe.run_js("""
+    var iframes = document.querySelectorAll('#px-captcha iframe');
+    for (var i = 0; i < iframes.length; i++) {
+        var display = window.getComputedStyle(iframes[i]).display;
+        if (display !== 'none') return i;
+    }
+    return iframes.length - 1;
+    """, as_expr=False)
+
+    frame = humanCaptchaIframe.get_frame(index=visible_idx)
+    if not frame:
+        print("❌ get_frame(index=" + str(visible_idx) + ") 返回 None")
+        return None, visible_idx
+    return frame, visible_idx
+
+
+def poll_px_result(page, btnIframe, rounds: int = 6) -> str:
+    """轮询 PX 验证结果。返回 "passed" / "loading" / "retry" / "timeout"。"""
+    for rnd in range(rounds):
+        time.sleep(3)
+        try:
+            st = btnIframe.run_js("""
+            var b = document.querySelector("[role='button']");
+            var ld = document.querySelector(".fetching-volume.draw, [role='status'], .draw");
+            var ag = document.querySelector("[aria-label*='again'], [aria-label*='Again']");
+            return {p: !!b, t: b ? String(b.textContent || '').trim().slice(0, 80) : '',
+                    l: !!ld, a: !!ag};
+            """, as_expr=False)
+        except Exception:
+            try:
+                human_present = bool(page.ele("#human", timeout=2))
+            except Exception:
+                human_present = False
+            if not human_present:
+                return "passed"
+            print("r{}: frame unavailable, retrying".format(rnd + 1))
+            continue
+
+        if st.get("l"):
+            time.sleep(8)
+            return "loading"
+        if st.get("a"):
+            return "retry"
+        print("r{}: pressed={} loading={} retry={}".format(
+            rnd + 1, st.get("p"), st.get("l"), st.get("a")))
+    return "timeout"
