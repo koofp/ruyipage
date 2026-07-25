@@ -3,37 +3,38 @@ from utils import generate_strong_password, random_email, randomDayAndMonthAndYe
 from register_flow import fill_form
 from px_captcha import handle_captcha
 from getAccountData import save_account_data
+import sys
 
 
-# ── 配置 ──
-REG_EMAIL = f"{random_email()}@outlook.com"
-REG_PASSWORD = generate_strong_password()
-PROXY = "http://127.0.0.1:7897"
+def run_once(proxy="http://127.0.0.1:7897"):
+    """执行一次完整的 Outlook 注册流程。返回 (ok, record_file) 元组。"""
+    email = f"{random_email()}@outlook.com"
+    password = generate_strong_password()
+    first_name, last_name = generate_name()
+    birth_month = randomDayAndMonthAndYear("month")
+    birth_day = randomDayAndMonthAndYear("day")
+    birth_year = str(randomDayAndMonthAndYear("year"))
 
-_birth_month = randomDayAndMonthAndYear("month")
-_birth_day = randomDayAndMonthAndYear("day")
-_birth_year = str(randomDayAndMonthAndYear("year"))
-first_name, last_name = generate_name()
+    print(f"=== 开始注册: {email} ===")
+    settings = Settings(proxy=proxy)
+    page = create_page(settings)
 
-# ── 启动浏览器 ──
-settings = Settings(proxy=PROXY)
-page = create_page(settings)
-
-try:
-    # ── 注册流程 ──
-    fill_form(page, REG_EMAIL, REG_PASSWORD,
-              first_name, last_name, _birth_month, _birth_day, _birth_year)
-
-    # ── PX 人机验证 ──
-    if not handle_captcha(page):
-        print("[FirefoxOptions] PX captcha failed, skipping account save")
-        exit(1)
-
-    # ── 保存账号数据 ──
-    result = save_account_data(page, REG_EMAIL, REG_PASSWORD, proxy=PROXY)
-    print(f"[FirefoxOptions] 账号保存结果: {result}")
-finally:
     try:
-        page.quit()
-    except Exception as exc:
-        print(f"[FirefoxOptions] page.quit failed: {type(exc).__name__}: {exc}")
+        fill_form(page, email, password, first_name, last_name,
+                  birth_month, birth_day, birth_year)
+        if not handle_captcha(page):
+            print(f"❌ PX 验证失败: {email}")
+            return False, None
+        result = save_account_data(page, email, password, proxy=proxy)
+        print(f"✅ 成功: {result['record_file']}")
+        return True, result['record_file']
+    finally:
+        try:
+            page.quit()
+        except Exception:
+            pass
+
+
+if __name__ == "__main__":
+    ok, record = run_once(proxy="http://127.0.0.1:7897")
+    sys.exit(0 if ok else 1)
