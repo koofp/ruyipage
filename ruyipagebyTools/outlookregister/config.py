@@ -24,7 +24,7 @@ def create_page(settings: Settings = None) -> FirefoxPage:
     """根据配置创建 FirefoxPage 并打开注册页。返回 ready 的 page 对象。"""
     if settings is None:
         settings = Settings()
-
+    # print(f"setting:{settings}")
     opts = (FirefoxOptions()
             .set_browser_path(settings.browser_path)
             .set_port(settings.port)

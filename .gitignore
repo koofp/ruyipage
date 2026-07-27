@@ -40,6 +40,17 @@ _tmp_js_*.js
 # Backup files
 *copy.py
 
+# Proxy config files (contain credentials)
+proxies.txt
+proxies_ok.txt
+_tmp_js_*.js
+
+# Shortcuts
+*.lnk
+
+# Backup files
+*copy.py
+
 # 不上传账号
 ruyipagebyTools/outlookregister/_outlook_pool
 
