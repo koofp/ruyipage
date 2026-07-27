@@ -3,6 +3,32 @@ import os
 import sys
 import time
 from FirefoxOptions import run_once
+from datetime import datetime
+
+# 日志
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+LOG_DIR = os.path.join(SCRIPT_DIR, "_logs")
+os.makedirs(LOG_DIR, exist_ok=True)
+LOG_FILE = os.path.join(LOG_DIR, datetime.now().strftime("batch_%Y%m%d_%H%M%S.log"))
+
+
+class _Tee:
+    def __init__(self, filepath):
+        self.console = sys.stdout
+        self.file = open(filepath, "a", encoding="utf-8", buffering=1)
+
+    def write(self, text):
+        self.console.write(text)
+        self.file.write(text)
+
+    def flush(self):
+        self.console.flush()
+        self.file.flush()
+
+
+sys.stdout = _Tee(LOG_FILE)
+sys.stderr = sys.stdout
+print(f"日志: {LOG_FILE}")
 
 BATCH_SIZE = 5               # 需要成功注册的个数
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
