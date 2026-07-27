@@ -128,6 +128,10 @@ def _extract_graph_for_account(email, password, proxy=None, attempts=3):
     """按 reg-factory 的 3 次退避策略提取 Graph refresh token。"""
     for attempt in range(attempts):
         try:
+            # NOTE: reg-factory's get_graph_token() does not accept a proxy
+            # parameter. We pass the proxy via environment variables, which is
+            # safe in serial execution but would need explicit session-level
+            # config for concurrent use. The finally block restores the env.
             if proxy:
                 os.environ["HTTP_PROXY"] = str(proxy)
                 os.environ["HTTPS_PROXY"] = str(proxy)

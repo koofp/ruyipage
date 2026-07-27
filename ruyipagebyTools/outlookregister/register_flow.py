@@ -36,8 +36,11 @@ def fill_form(page: FirefoxPage, email: str, password: str,
     page.wait(random.uniform(0.4, 0.8))
 
     options = page.eles("xpath://div[@role=\"option\"]")
-    if len(options) == 0:
-        raise RuntimeError("Birth month dropdown has no options — page load incomplete")
+    if not options or birth_month_idx >= len(options):
+        raise RuntimeError(
+            "Birth month: dropdown has {} options, "
+            "expected index {} — page load incomplete".format(
+                len(options), birth_month_idx))
     page.actions.human_move(options[birth_month_idx], algorithm="windmouse").human_click().perform()
     page.wait(random.uniform(0.3, 0.7))
 
@@ -47,8 +50,11 @@ def fill_form(page: FirefoxPage, email: str, password: str,
     page.wait(random.uniform(0.5, 0.9))
 
     options = page.eles("xpath://div[@role=\"option\"]")
-    if len(options) == 0:
-        raise RuntimeError("Birth day dropdown has no options — page load incomplete")
+    if not options or birth_day_idx >= len(options):
+        raise RuntimeError(
+            "Birth day: dropdown has {} options, "
+            "expected index {} — page load incomplete".format(
+                len(options), birth_day_idx))
     page.actions.human_move(options[birth_day_idx], algorithm="windmouse").human_click().perform()
     page.wait(random.uniform(0.4, 0.8))
 

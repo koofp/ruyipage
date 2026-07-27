@@ -16,7 +16,7 @@ class Settings:
     height: int = 900
     human_algorithm: str = "windmouse"
     proxy: str = "http://127.0.0.1:7897"
-    action_visual: bool = True
+    action_visual: bool = False
     close_on_exit: bool = False
 
 
@@ -28,6 +28,7 @@ def create_page(settings: Settings = None) -> FirefoxPage:
     opts = (FirefoxOptions()
             .set_browser_path(settings.browser_path)
             .set_port(settings.port)
+            .set_random_port()
             .headless(settings.headless)
             .set_window_size(settings.width, settings.height)
             .set_human_algorithm(settings.human_algorithm)
