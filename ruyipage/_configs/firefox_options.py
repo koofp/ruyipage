@@ -37,7 +37,7 @@ class FirefoxOptions(object):
     def __init__(self):
         # 浏览器可执行文件路径
         if sys.platform == "win32":
-            self._browser_path = r"D:\EXED\10_brower\firefox\firefox.exe"
+            self._browser_path = r"D:\EXED\10_brower\firefox-151.0a1.en-US.win64-20260728\firefox\firefox.exe"
         elif sys.platform == "darwin":
             self._browser_path = "/Applications/Firefox.app/Contents/MacOS/firefox"
         else:

@@ -4,7 +4,7 @@ from ruyipage import FirefoxPage,FirefoxOptions
 def test_emulation():
     opts = FirefoxOptions()
     #请使用https://github.com/LoseNine/firefox-fingerprintBrowser，或者任意抹除webdriver的指纹浏览器
-    opts.set_browser_path(r"D:\EXED\10_brower\firefox\firefox.exe")
+    opts.set_browser_path(r"D:\EXED\10_brower\firefox-151.0a1.en-US.win64-20260728\firefox\firefox.exe")
     opts.set_fpfile(r"C:\Program Files\Mozilla Firefox\profile1.txt")
     page = FirefoxPage(opts)
     page.get("https://www.browserscan.net/zh")

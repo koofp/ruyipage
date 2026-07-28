@@ -21,7 +21,7 @@ PROXY_HOST = "your-proxy-host"
 PROXY_PORT = 8080
 TARGET_URL = "http://ipinfo.io/json"
 FPFILE_PATH = r"C:\Program Files\Mozilla Firefox\profile1.txt"
-BROWSER_PATH = r"D:\EXED\10_brower\firefox\firefox.exe"
+BROWSER_PATH = r"D:\EXED\10_brower\firefox-151.0a1.en-US.win64-20260728\firefox\firefox.exe"
 HEADLESS = False
 
 

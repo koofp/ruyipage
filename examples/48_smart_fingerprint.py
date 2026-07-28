@@ -67,7 +67,7 @@ from ruyipage import (
 # =============================================================
 
 # Firefox 可执行文件路径
-BROWSER_PATH = r"D:\EXED\10_brower\firefox\firefox.exe"
+BROWSER_PATH = r"D:\EXED\10_brower\firefox-151.0a1.en-US.win64-20260728\firefox\firefox.exe"
 
 # 代理配置（直连就把 PROXY_HOST 改成 None）
 PROXY_HOST = "127.0.0.1"

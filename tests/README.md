@@ -57,7 +57,7 @@ python -m pytest -m fast -q
 如果你希望显式指定浏览器路径，Windows 下请使用 PowerShell：
 
 ```powershell
-$env:RUYIPAGE_TEST_FIREFOX_PATH="D:\EXED\10_brower\firefox\firefox.exe"
+$env:RUYIPAGE_TEST_FIREFOX_PATH="D:\EXED\10_brower\firefox-151.0a1.en-US.win64-20260728\firefox\firefox.exe"
 $env:RUYIPAGE_VERIFY_NATIVE_GEOMETRY="1"
 python -m pytest tests/features/test_fingerprint_window_geometry.py -q
 ```

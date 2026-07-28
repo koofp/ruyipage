@@ -60,6 +60,8 @@ def fill_form(page: FirefoxPage, email: str, password: str,
 
     # ── birth year ──
     year = page.ele("xpath://*[@id=\"floatingLabelInput24\"]")
+    if not year:
+        year = page.ele("xpath://*[@id=\"floatingLabelInput22\"]")
     page.actions.human_move(year, algorithm="windmouse").human_click().human_type(birth_year).perform()
     page.wait(random.uniform(0.6, 1.0))
 
@@ -73,7 +75,9 @@ def fill_form(page: FirefoxPage, email: str, password: str,
     page.wait(random.uniform(0.6, 1.0))
 
     # ── last name ──
-    last_el = page.ele("xpath://div[1]/div[2]/div[1]/span[1]")
+    # last_el = page.ele("xpath://div[1]/div[2]/div[1]/span[1]")
+    # if not last_el:
+    last_el = page.ele("xpath://*[@id=\"lastNameInput\"]")
     page.actions.human_move(last_el, algorithm="windmouse").human_click().human_type(last_name).perform()
 
     name_next = page.ele("xpath://button[@data-testid=\"primaryButton\"]")

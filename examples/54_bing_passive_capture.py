@@ -15,7 +15,7 @@ Run:
 Useful overrides:
 
     python examples/54_bing_passive_capture.py ^
-        --browser-path D:\EXED\10_brower\firefox\firefox.exe ^
+        --browser-path D:\EXED\10_brower\firefox-151.0a1.en-US.win64-20260728\firefox\firefox.exe ^
         --query ruyipage ^
         --count 5 ^
         --timeout 15
