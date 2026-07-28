@@ -29,12 +29,16 @@ class _Tee:
 sys.stdout = _Tee(LOG_FILE)
 sys.stderr = sys.stdout
 print(f"日志: {LOG_FILE}")
+# 
+batch_size = os.environ.get("BATCH_SIZE", 7)
+wait_between = os.environ.get("WAIT_BETWEEN", 10)
+firefox_quit_wait = os.environ.get("FIREFOX_QUIT_WAIT", 5)
 
-BATCH_SIZE = 5               # 需要成功注册的个数
+BATCH_SIZE = batch_size              # 需要成功注册的个数
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROXY_FILE = os.path.join(SCRIPT_DIR, "proxies_ok.txt")
-WAIT_BETWEEN = 10
-FIREFOX_QUIT_WAIT = 3
+WAIT_BETWEEN = wait_between   # 每次注册完等待时间
+FIREFOX_QUIT_WAIT = firefox_quit_wait # 退出火狐浏览器等待时间
 
 # 从已过滤文件读取可用代理
 proxies = []
@@ -62,6 +66,27 @@ while successes < BATCH_SIZE and proxies and attempt < max_attempts:
     idx = (attempt - 1) % len(proxies)
     proxy = proxies[idx]
     print(f"\n--- 尝试 #{attempt}（成功 {successes}/{BATCH_SIZE}）节点[{idx}==>{proxy}] ---")
+
+    # ── Clash 预切：代理国家匹配延迟最低节点 ──
+    from urllib.parse import urlparse as _urlparse
+    try:
+        _parsed = _urlparse(proxy)
+        _pwd = _parsed.password or ""
+        _parts = _pwd.split("-")
+        _country = None
+        for _part in _parts:
+            if len(_part) == 2 and _part.isalpha() and _part.isupper():
+                _country = _part
+                break
+    except Exception:
+        _country = None
+
+    if _country:
+        try:
+            from clash_helper import match_country_node
+            match_country_node(_country)
+        except Exception as _e:
+            print(f"  Clash pre-select: {type(_e).__name__}: {_e}")
 
     try:
         ok, record = run_once(proxy=proxy)
