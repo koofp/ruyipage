@@ -38,7 +38,13 @@ if os.path.isfile(_ENV_FILE):
             _line = _line.strip()
             if _line and not _line.startswith("#") and "=" in _line:
                 _k, _v = _line.split("=", 1)
-                os.environ.setdefault(_k.strip(), _v.strip().strip('"').strip("'"))
+                _k = _k.strip()
+                _v = _v.strip()
+                _hash_pos = _v.rfind(" #")
+                if _hash_pos >= 0:
+                    _v = _v[:_hash_pos].strip()
+                _v = _v.strip('"').strip("'")
+                os.environ.setdefault(_k, _v)
 
 # ── 配置 ──（.env 已加载）
 BATCH_SIZE = int(os.environ.get("BATCH_SIZE", "5"))

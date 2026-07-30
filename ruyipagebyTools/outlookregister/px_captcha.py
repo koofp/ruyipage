@@ -115,7 +115,16 @@ def handle_captcha(page: FirefoxPage) -> bool:
         native_hold(sx, sy, min_seconds=12.0, max_seconds=15.0,
                     is_done=lambda: is_px_done(_current_btnIframe))
 
-        result = poll_px_result(page, humanCaptchaIframe)
+        try:
+            result = poll_px_result(page, humanCaptchaIframe)
+        except Exception as _poll_err:
+            _msg = str(_poll_err)
+            print("PX poll failed: {}: {}".format(type(_poll_err).__name__, _msg[:120]))
+            # no such frame = PX iframe temporarily gone during rebuild — retriable
+            if "no such frame" in _msg:
+                result = "retry"
+            else:
+                result = "timeout"
         print("PX result: {}".format(result))
         if result in ("passed", "loading"):
             return True
