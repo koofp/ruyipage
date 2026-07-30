@@ -7,10 +7,6 @@ import urllib.request
 # 加载上级目录下的 .env 文件
 # 优先当前目录，回退到 project 根目录
 _ENV_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
-if not os.path.isfile(_ENV_FILE):
-    _ENV_FILE = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "..", "..", ".env")
-    _ENV_FILE = os.path.normpath(_ENV_FILE)
 if os.path.isfile(_ENV_FILE):
     with open(_ENV_FILE, encoding="utf-8") as _f:
         for _line in _f:
