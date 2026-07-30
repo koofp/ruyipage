@@ -124,21 +124,136 @@ def _append_dedup_txt(filepath, line):
     return True
 
 
-def _extract_graph_for_account(email, password, proxy=None, attempts=3):
-    """按 reg-factory 的 3 次退避策略提取 Graph refresh token。"""
+def _extract_graph_via_page(page, email, password):
+    """在注册后的浏览器 page 上下文里走 OAuth 授权码流程（PKCE）提取 refresh_token。
+    利用已有 Cookie 和会话，微软信任度高于纯 HTTP 模拟。
+    参考 get_token.py 的选择器和 PKCE 流程。"""
+    import base64
+    import hashlib
+    import random
+    import secrets
+    import string
+    import urllib.parse
+    from urllib.request import Request, urlopen
+
+    CLIENT_ID = "9e5f94bc-e8a4-4e73-b8be-63364c29d753"
+    REDIRECT_URI = "http://localhost"
+    SCOPE = "offline_access https://graph.microsoft.com/Mail.Read"
+    TENANT = "common"
+    TOKEN_URL = "https://login.microsoftonline.com/{}/oauth2/v2.0/token".format(TENANT)
+
+    # ── PKCE ──
+    _code_verifier = "".join(
+        secrets.choice(string.ascii_letters + string.digits + "-._~")
+        for _ in range(128)
+    )
+    _code_challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(_code_verifier.encode("utf-8")).digest()
+    ).decode("ascii").rstrip("=")
+
+    auth_url = (
+        "https://login.microsoftonline.com/{}/oauth2/v2.0/authorize"
+        "?client_id={}&response_type=code"
+        "&redirect_uri={}&scope={}&response_mode=query"
+        "&code_challenge={}&code_challenge_method=S256"
+    ).format(TENANT, CLIENT_ID,
+             urllib.parse.quote(REDIRECT_URI, safe=""),
+             urllib.parse.quote(SCOPE, safe=""),
+             _code_challenge)
+
+    try:
+        page.get(auth_url, wait="complete")
+        page.wait(random.uniform(1.0, 2.5))
+
+        # ── 填邮箱（参考 get_token.py: [name="loginfmt"]）──
+        email_input = page.ele('[name="loginfmt"]', timeout=10)
+        if not email_input:
+            print("[getAccountData] page OAuth: email input not found")
+            return None
+        email_input.input(email)
+        page.wait(random.uniform(0.4, 0.8))
+
+        # ── 点下一步 ──
+        next_btn = page.ele("#idSIButton9", timeout=5)
+        if next_btn:
+            next_btn.click_self()
+            page.wait(random.uniform(1.5, 3.0))
+
+        # ── 填密码（如果页面要求）──
+        pwd_input = page.ele('[name="passwd"], #i0118', timeout=5)
+        if pwd_input:
+            pwd_input.input(password)
+            page.wait(random.uniform(0.4, 0.8))
+            signin = page.ele("#idSIButton9", timeout=5)
+            if signin:
+                signin.click_self()
+                page.wait(random.uniform(2.0, 4.0))
+
+        # ── 等待 localhost redirect（含 code=...）──
+        for _ in range(40):
+            url = page.url or ""
+            if "localhost" in url and "code=" in url:
+                parsed = urllib.parse.urlparse(url)
+                params = urllib.parse.parse_qs(parsed.query)
+                code = params.get("code", [None])[0]
+                if code:
+                    print("[getAccountData] page OAuth: got authorization code")
+                    token_data = urllib.parse.urlencode({
+                        "client_id": CLIENT_ID,
+                        "grant_type": "authorization_code",
+                        "code": code,
+                        "redirect_uri": REDIRECT_URI,
+                        "code_verifier": _code_verifier,
+                    }).encode("utf-8")
+
+                    req = Request(TOKEN_URL, data=token_data, method="POST")
+                    req.add_header("Content-Type", "application/x-www-form-urlencoded")
+                    with urlopen(req, timeout=15) as resp:
+                        body = json.loads(resp.read().decode("utf-8"))
+
+                    if body.get("refresh_token"):
+                        print("[getAccountData] page OAuth: refresh_token OK")
+                        return {
+                            "refresh_token": body["refresh_token"],
+                            "access_token": body.get("access_token", ""),
+                            "client_id": CLIENT_ID,
+                            "expires_in": body.get("expires_in"),
+                        }
+                    else:
+                        err = body.get("error_description", body.get("error", "unknown"))
+                        print("[getAccountData] page OAuth token error: {}".format(err[:150]))
+                        return None
+
+            # ── Consent 页（参考 get_token.py: [data-testid="appConsentPrimaryButton"]）──
+            consent_btn = page.ele('[data-testid="appConsentPrimaryButton"]', timeout=3)
+            if consent_btn:
+                consent_btn.click_self()
+                page.wait(random.uniform(1.5, 3.0))
+                continue
+
+            page.wait(1.0)
+        else:
+            print("[getAccountData] page OAuth: timed out waiting for code")
+            return None
+
+    except Exception as exc:
+        print("[getAccountData] page OAuth failed: {}: {}".format(type(exc).__name__, exc))
+        return None
+def _extract_graph_via_http(email, password, proxy=None, attempts=3):
+    """按 reg-factory 的 3 次退避策略提取 Graph refresh token（HTTP 方式，作为回退）。"""
     for attempt in range(attempts):
         try:
             # NOTE: reg-factory's get_graph_token() does not accept a proxy
             # parameter. We pass the proxy via environment variables, which is
             # safe in serial execution but would need explicit session-level
-            # config for concurrent use. The finally block restores the env.
+            # config for concurrent use. The finally block clears the vars.
             if proxy:
                 os.environ["HTTP_PROXY"] = str(proxy)
                 os.environ["HTTPS_PROXY"] = str(proxy)
             graph = get_graph_token(email, password)
         except Exception as exc:
             graph = None
-            print("[getAccountData] graph token attempt {}/{} error: {}: {}".format(
+            print("[getAccountData] HTTP graph attempt {}/{} error: {}: {}".format(
                 attempt + 1, attempts, type(exc).__name__, exc
             ))
         finally:
@@ -150,13 +265,24 @@ def _extract_graph_for_account(email, password, proxy=None, attempts=3):
             return graph
 
         if attempt < attempts - 1:
-            print("[getAccountData] graph token attempt {}/{} missing; retrying.".format(
+            print("[getAccountData] HTTP graph attempt {}/{} missing; retrying.".format(
                 attempt + 1, attempts
             ))
             time.sleep(3 * (attempt + 1))
 
-    print("[getAccountData] graph token missing after {} attempts.".format(attempts))
+    print("[getAccountData] HTTP graph token missing after {} attempts.".format(attempts))
     return None
+
+
+def _extract_graph_for_account(page, email, password, proxy=None):
+    """方案 B：page OAuth 优先 → HTTP 回退。"""
+    # 第一步：page OAuth（一次机会，浏览器内操作）
+    result = _extract_graph_via_page(page, email, password)
+    if result and result.get("refresh_token"):
+        return result
+    print("[getAccountData] page OAuth failed, falling back to HTTP extractor...")
+    # 第二步：HTTP 回退
+    return _extract_graph_via_http(email, password, proxy=proxy)
 
 
 # ---------------------------------------------------------------------------
@@ -184,14 +310,14 @@ def save_account_data(page, email, password, proxy=None, output_dir=None):
     pool_dir = output_dir
     os.makedirs(pool_dir, exist_ok=True)
 
-    # 1. Cookie
-    cookies = _export_cookies(page)
-    print("[getAccountData] exported {} microsoft-related cookies".format(len(cookies)))
-
-    # 2. Graph token
-    graph = _extract_graph_for_account(email, password, proxy=proxy)
+    # 1. Graph token：page OAuth 优先 → HTTP 回退（先提取，后导出 cookie）
+    graph = _extract_graph_for_account(page, email, password, proxy=proxy)
     has_token = bool(graph and graph.get("refresh_token"))
     print("[getAccountData] graph token: {}".format("OK" if has_token else "MISSING"))
+
+    # 2. Cookie（page OAuth 可能新增/更新 Microsoft cookie，token 后导出）
+    cookies = _export_cookies(page)
+    print("[getAccountData] exported {} microsoft-related cookies".format(len(cookies)))
 
     # 3. 构造记录
     ts = datetime.now(timezone.utc).astimezone().isoformat()

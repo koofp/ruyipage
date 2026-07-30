@@ -53,17 +53,29 @@ def wait_for_px_captcha_iframe(humanCaptchaIframe, timeout: int = 35) -> bool:
 
 
 def get_visible_px_iframe(humanCaptchaIframe):
-    """取 humanCaptchaIframe 下第一个可见的 child context。返回 (frame, idx)。"""
-    visible_idx = humanCaptchaIframe.run_js("""
-    var iframes = document.querySelectorAll('#px-captcha iframe');
-    for (var i = 0; i < iframes.length; i++) {
-        var display = window.getComputedStyle(iframes[i]).display;
-        if (display !== 'none') return i;
-    }
-    return iframes.length - 1;
-    """, as_expr=False)
+    """取 humanCaptchaIframe 下第一个可见的 PX child context，返回 (frame, idx)。
 
-    frame = humanCaptchaIframe.get_frame(index=visible_idx)
+    iframe 不存在、不可见或 context 瞬态重建时返回 (None, -1)，不抛异常。"""
+    try:
+        visible_idx = humanCaptchaIframe.run_js("""
+        var iframes = document.querySelectorAll('#px-captcha iframe');
+        for (var i = 0; i < iframes.length; i++) {
+            var display = window.getComputedStyle(iframes[i]).display;
+            if (display !== 'none') return i;
+        }
+        return -1;
+        """, as_expr=False)
+    except Exception:
+        return None, -1
+
+    if visible_idx is None or visible_idx < 0:
+        return None, visible_idx if visible_idx is not None else -1
+
+    try:
+        frame = humanCaptchaIframe.get_frame(index=visible_idx)
+    except Exception:
+        return None, visible_idx
+
     if not frame:
         print("❌ get_frame(index=" + str(visible_idx) + ") 返回 None")
         return None, visible_idx
@@ -75,13 +87,26 @@ def poll_px_result(page, humanCaptchaIframe, rounds: int = 6) -> str:
        返回 "passed" / "loading" / "retry" / "timeout"。
        传入 page 和 #human 层的 humanCaptchaIframe（不直接传 btnIframe）。"""
     btnIframe = None
+    consecutive_miss = 0
     for rnd in range(rounds):
         time.sleep(3)
         try:
             btnIframe, _ = get_visible_px_iframe(humanCaptchaIframe)
             if not btnIframe:
-                print("r{}: cannot re-get visible PX iframe, retrying".format(rnd + 1))
+                consecutive_miss += 1
+                print("r{}: cannot re-get visible PX iframe (miss {}/{})".format(
+                    rnd + 1, consecutive_miss, rounds))
+                if consecutive_miss >= 3:
+                    # Waited ~12s without frame — check if #human itself is gone
+                    try:
+                        human_present = bool(page.ele("#human", timeout=2))
+                    except Exception:
+                        human_present = False
+                    if not human_present:
+                        return "passed"
+                    time.sleep(5)
                 continue
+            consecutive_miss = 0
             st = btnIframe.run_js("""
             var b = document.querySelector("[role='button']");
             var ld = document.querySelector(".fetching-volume.draw, [role='status'], .draw");

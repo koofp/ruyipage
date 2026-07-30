@@ -25,6 +25,7 @@ def run_once(proxy="http://127.0.0.1:7897"):
         if not handle_captcha(page):
             print(f"❌ PX 验证失败: {email}")
             return False, None
+        page.wait(1)
         result = save_account_data(page, email, password, proxy=proxy)
         print(f"✅ 成功: {result['record_file']}")
         return True, result['record_file']

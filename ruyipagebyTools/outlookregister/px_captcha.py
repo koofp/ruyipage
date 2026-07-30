@@ -65,8 +65,15 @@ def handle_captcha(page: FirefoxPage) -> bool:
     """, as_expr=False)
     print("#px-captcha: {}".format(px_info))
 
-    # ── 3. get visible PX iframe ──
-    btnIframe, vis_idx = get_visible_px_iframe(humanCaptchaIframe)
+    # ── 3. get visible PX iframe（3 次重试，等待瞬态重建）──
+    btnIframe = None
+    vis_idx = -1
+    for _get_retry in range(3):
+        btnIframe, vis_idx = get_visible_px_iframe(humanCaptchaIframe)
+        if btnIframe:
+            break
+        print("PX iframe not visible (attempt {}/3), retrying...".format(_get_retry + 1))
+        time.sleep(2)
     if not btnIframe:
         return False
     print("btnIframe {} (visible_idx={})".format(btnIframe, vis_idx))
@@ -132,11 +139,19 @@ def handle_captcha(page: FirefoxPage) -> bool:
             print("PX requested retry ({}/3), waiting 3s...".format(attempt + 1))
             time.sleep(3)
             # Before the next attempt, refresh the PX iframe reference.
-            new_btn, _ = get_visible_px_iframe(humanCaptchaIframe)
-            if new_btn:
-                btnIframe = new_btn
-                print("btnIframe refreshed for retry: {}".format(btnIframe))
-            continue
+            # 3 retries, then clean failure if still no frame available.
+            new_btn = None
+            for _retry in range(3):
+                new_btn, _ = get_visible_px_iframe(humanCaptchaIframe)
+                if new_btn:
+                    btnIframe = new_btn
+                    print("btnIframe refreshed for retry: {}".format(btnIframe))
+                    break
+                print("PX iframe refresh (attempt {}/3), retrying...".format(_retry + 1))
+                time.sleep(2)
+            if not new_btn:
+                print("PX iframe still unavailable after refresh — aborting this attempt")
+                return False
         return False
 
     print("PX failed after 3 attempts")
