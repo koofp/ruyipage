@@ -194,6 +194,12 @@ def _extract_graph_via_page(page, email, password, proxy=None):
         for _ in range(30):
             if captured["url"]:
                 break
+            skip_btn = page.ele('#iShowSkip', timeout=1)
+            if skip_btn:
+                print("[getAccountData] page OAuth: proofs/Add -> skip")
+                skip_btn.click_self()
+                page.wait(random.uniform(1.5, 3.0))
+                continue
             consent_btn = page.ele('[data-testid="appConsentPrimaryButton"]', timeout=1)
             if consent_btn:
                 consent_btn.click_self()
