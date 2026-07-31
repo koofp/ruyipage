@@ -124,17 +124,15 @@ def _append_dedup_txt(filepath, line):
     return True
 
 
-def _extract_graph_via_page(page, email, password):
-    """在注册后的浏览器 page 上下文里走 OAuth 授权码流程（PKCE）提取 refresh_token。
-    利用已有 Cookie 和会话，微软信任度高于纯 HTTP 模拟。
-    参考 get_token.py 的选择器和 PKCE 流程。"""
+def _extract_graph_via_page(page, email, password, proxy=None):
+    """Use the registered browser session and PKCE to obtain a Graph refresh token."""
     import base64
     import hashlib
     import random
+    import requests
     import secrets
     import string
     import urllib.parse
-    from urllib.request import Request, urlopen
 
     CLIENT_ID = "9e5f94bc-e8a4-4e73-b8be-63364c29d753"
     REDIRECT_URI = "http://localhost"
@@ -142,7 +140,6 @@ def _extract_graph_via_page(page, email, password):
     TENANT = "common"
     TOKEN_URL = "https://login.microsoftonline.com/{}/oauth2/v2.0/token".format(TENANT)
 
-    # ── PKCE ──
     _code_verifier = "".join(
         secrets.choice(string.ascii_letters + string.digits + "-._~")
         for _ in range(128)
@@ -156,89 +153,124 @@ def _extract_graph_via_page(page, email, password):
         "?client_id={}&response_type=code"
         "&redirect_uri={}&scope={}&response_mode=query"
         "&code_challenge={}&code_challenge_method=S256"
-    ).format(TENANT, CLIENT_ID,
-             urllib.parse.quote(REDIRECT_URI, safe=""),
-             urllib.parse.quote(SCOPE, safe=""),
-             _code_challenge)
+    ).format(
+        TENANT,
+        CLIENT_ID,
+        urllib.parse.quote(REDIRECT_URI, safe=""),
+        urllib.parse.quote(SCOPE, safe=""),
+        _code_challenge,
+    )
+
+    captured = {"url": None}
+    intercept_started = False
+
+    def _capture_redirect(req):
+        try:
+            url = req.url or ""
+            if url.startswith(REDIRECT_URI) and "code=" in url:
+                captured["url"] = url
+                print("[getAccountData] page OAuth: intercepted authorization code redirect")
+        except Exception as exc:
+            print("[getAccountData] page OAuth intercept handler error: {}: {}".format(
+                type(exc).__name__, exc
+            ))
+        finally:
+            try:
+                if not req.handled:
+                    req.continue_request()
+            except Exception as exc:
+                print("[getAccountData] page OAuth intercept continue error: {}: {}".format(
+                    type(exc).__name__, exc
+                ))
 
     try:
+        page.intercept.start_requests(_capture_redirect)
+        intercept_started = True
         page.get(auth_url, wait="complete")
         page.wait(random.uniform(1.0, 2.5))
 
-        # ── 填邮箱（参考 get_token.py: [name="loginfmt"]）──
-        email_input = page.ele('[name="loginfmt"]', timeout=10)
-        if not email_input:
-            print("[getAccountData] page OAuth: email input not found")
-            return None
-        email_input.input(email)
-        page.wait(random.uniform(0.4, 0.8))
-
-        # ── 点下一步 ──
-        next_btn = page.ele("#idSIButton9", timeout=5)
-        if next_btn:
-            next_btn.click_self()
-            page.wait(random.uniform(1.5, 3.0))
-
-        # ── 填密码（如果页面要求）──
-        pwd_input = page.ele('[name="passwd"], #i0118', timeout=5)
-        if pwd_input:
-            pwd_input.input(password)
-            page.wait(random.uniform(0.4, 0.8))
-            signin = page.ele("#idSIButton9", timeout=5)
-            if signin:
-                signin.click_self()
-                page.wait(random.uniform(2.0, 4.0))
-
-        # ── 等待 localhost redirect（含 code=...）──
-        for _ in range(40):
-            url = page.url or ""
-            if "localhost" in url and "code=" in url:
-                parsed = urllib.parse.urlparse(url)
-                params = urllib.parse.parse_qs(parsed.query)
-                code = params.get("code", [None])[0]
-                if code:
-                    print("[getAccountData] page OAuth: got authorization code")
-                    token_data = urllib.parse.urlencode({
-                        "client_id": CLIENT_ID,
-                        "grant_type": "authorization_code",
-                        "code": code,
-                        "redirect_uri": REDIRECT_URI,
-                        "code_verifier": _code_verifier,
-                    }).encode("utf-8")
-
-                    req = Request(TOKEN_URL, data=token_data, method="POST")
-                    req.add_header("Content-Type", "application/x-www-form-urlencoded")
-                    with urlopen(req, timeout=15) as resp:
-                        body = json.loads(resp.read().decode("utf-8"))
-
-                    if body.get("refresh_token"):
-                        print("[getAccountData] page OAuth: refresh_token OK")
-                        return {
-                            "refresh_token": body["refresh_token"],
-                            "access_token": body.get("access_token", ""),
-                            "client_id": CLIENT_ID,
-                            "expires_in": body.get("expires_in"),
-                        }
-                    else:
-                        err = body.get("error_description", body.get("error", "unknown"))
-                        print("[getAccountData] page OAuth token error: {}".format(err[:150]))
-                        return None
-
-            # ── Consent 页（参考 get_token.py: [data-testid="appConsentPrimaryButton"]）──
-            consent_btn = page.ele('[data-testid="appConsentPrimaryButton"]', timeout=3)
+        # The registration browser session is already authenticated. Do not
+        # re-enter credentials; only grant consent when Microsoft asks for it.
+        for _ in range(30):
+            if captured["url"]:
+                break
+            consent_btn = page.ele('[data-testid="appConsentPrimaryButton"]', timeout=1)
             if consent_btn:
                 consent_btn.click_self()
                 page.wait(random.uniform(1.5, 3.0))
                 continue
-
             page.wait(1.0)
-        else:
+
+        redirect_url = captured["url"]
+        if intercept_started:
+            try:
+                page.intercept.stop()
+            except Exception as exc:
+                print("[getAccountData] page OAuth intercept stop error: {}: {}".format(
+                    type(exc).__name__, exc
+                ))
+            intercept_started = False
+
+        # Keep page.url as a fallback for BiDi/browser combinations that do
+        # not surface this top-level redirect through interception.
+        if not redirect_url:
+            print("[getAccountData] page OAuth: intercept timed out; falling back to page.url")
+            for _ in range(40):
+                url = page.url or ""
+                if "localhost" in url and "code=" in url:
+                    redirect_url = url
+                    break
+                page.wait(1.0)
+
+        if not redirect_url:
             print("[getAccountData] page OAuth: timed out waiting for code")
             return None
+
+        parsed = urllib.parse.urlparse(redirect_url)
+        params = urllib.parse.parse_qs(parsed.query)
+        code = params.get("code", [None])[0]
+        if not code:
+            print("[getAccountData] page OAuth: redirect did not contain a code")
+            return None
+
+        print("[getAccountData] page OAuth: got authorization code")
+        token_payload = {
+            "client_id": CLIENT_ID,
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": REDIRECT_URI,
+            "code_verifier": _code_verifier,
+        }
+        request_kwargs = {"timeout": 15}
+        if proxy:
+            request_kwargs["proxies"] = {"http": proxy, "https": proxy}
+        token_resp = requests.post(TOKEN_URL, data=token_payload, **request_kwargs)
+        body = token_resp.json()
+
+        if body.get("refresh_token"):
+            print("[getAccountData] page OAuth: refresh_token OK")
+            return {
+                "refresh_token": body["refresh_token"],
+                "access_token": body.get("access_token", ""),
+                "client_id": CLIENT_ID,
+                "expires_in": body.get("expires_in"),
+            }
+
+        err = body.get("error_description", body.get("error", "unknown"))
+        print("[getAccountData] page OAuth token error: {}".format(err[:150]))
+        return None
 
     except Exception as exc:
         print("[getAccountData] page OAuth failed: {}: {}".format(type(exc).__name__, exc))
         return None
+    finally:
+        if intercept_started:
+            try:
+                page.intercept.stop()
+            except Exception:
+                pass
+
+
 def _extract_graph_via_http(email, password, proxy=None, attempts=3):
     """按 reg-factory 的 3 次退避策略提取 Graph refresh token（HTTP 方式，作为回退）。"""
     for attempt in range(attempts):
@@ -277,7 +309,7 @@ def _extract_graph_via_http(email, password, proxy=None, attempts=3):
 def _extract_graph_for_account(page, email, password, proxy=None):
     """方案 B：page OAuth 优先 → HTTP 回退。"""
     # 第一步：page OAuth（一次机会，浏览器内操作）
-    result = _extract_graph_via_page(page, email, password)
+    result = _extract_graph_via_page(page, email, password, proxy=proxy)
     if result and result.get("refresh_token"):
         return result
     print("[getAccountData] page OAuth failed, falling back to HTTP extractor...")
