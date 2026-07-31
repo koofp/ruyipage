@@ -2,7 +2,7 @@
 
 > 已校准(经 Codex 独立验证 + 日志实证 + 库源码核对)。按真实严重度排序。文档只记确定性结论。
 
-## 已修复(阶段0/1/2,commit `ca4466d` + `fb248be`)
+## 已修复(阶段0/1/2 + 阶段1补丁,commit `ca4466d` + `fb248be` + `46719b0`)
 
 | # | 问题 | 位置 | 修复 commit |
 |---|---|---|---|
@@ -14,18 +14,7 @@
 | 6 | run_batch except Exception 无脑删代理(含可重试异常) | run_batch.py | ca4466d |
 | 7 | idx=(attempt-1)%len(proxies) 删代理后错位 | run_batch.py | ca4466d |
 | 1 | page-OAuth 用 page.url 轮询抓 code(脆)+ 裸 urlopen 不走代理 | getAccountData | fb248be |
-
-## 进行中(阶段1 补丁)
-
-| # | 问题 | 位置 | 状态 |
-|---|---|---|---|
-| proofs/Add | _extract_graph_via_page 没处理 proofs/Add 绑定页,卡死从没成功 | getAccountData.py:194-202 | 🔄 阶段1补丁进行中 |
-
-**根因实证(日志)**:
-- `[getAccountData] page OAuth: timed out waiting for code` × 4(卡 proofs/Add)
-- `[#0] skipping proofs/Add (action=Skip)` × 多(reg-factory HTTP 在处理,成功)
-- 微软流程:authorize → 登录 → **proofs/Add** → consent → redirect localhost+code
-- `_extract_graph_via_page` 只等 appConsentPrimaryButton,proofs/Add 出现在 consent 前,不处理就卡死
+| proofs/Add | _extract_graph_via_page 没处理 proofs/Add 绑定页,卡死从没成功 | getAccountData.py:194-202 | 46719b0 |
 
 ---
 

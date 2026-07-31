@@ -6,7 +6,7 @@
 |:---:|---|:---:|---|
 | **0** | PX 验证链路 + token 成功语义 + 批量调度韧性(部分) | ✅ 完成 | `ca4466d` |
 | **1** | token 提取用 intercept 捕获 code + 走注册代理 | ✅ 完成 | `fb248be` |
-| **1 补丁** | _extract_graph_via_page 加 proofs/Add Skip 处理 | 🔄 进行中 | - |
+| **1 补丁** | _extract_graph_via_page 加 proofs/Add Skip 处理 | ✅ 完成 | `46719b0` |
 | **2** | run_batch 异常分类 + deque 防错位 + 方案乙(PX 失败增 streak) | ✅ 完成 | `ca4466d` |
 | **3** | revive_pending.py 复活 .pending(HTTP + 浏览器兜底) | ⏳ 待开始 | - |
 | **4** | 删 get_token.py | ⏳ 待开始 | - |

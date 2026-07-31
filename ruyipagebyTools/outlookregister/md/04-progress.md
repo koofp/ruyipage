@@ -2,7 +2,7 @@
 
 ## 当前状态(2026-07-31)
 
-**正在做**:阶段1 补丁(proofs/Add Skip 处理)— 已派写码 Codex(任务 019fb826),待其实现 + 审核员复审。
+**下一步**:阶段3 revive_pending.py 复活 .pending(HTTP + 浏览器兜底)。
 
 **已完成并 commit**:
 
@@ -10,6 +10,8 @@
 |---|---|---|---|
 | `ca4466d` | 阶段0 + 阶段2 | px_captcha.py, waits.py, getAccountData.py, FirefoxOptions.py, run_batch.py | +142 / -31 |
 | `fb248be` | 阶段1 | getAccountData.py | +106 / -74 |
+| `46719b0` | 阶段1补丁(proofs/Add Skip) | getAccountData.py | +6 / -0 |
+| `f9948df` | 文档 | md/ 7 文件 | +413 / -0 |
 
 ## 阶段进度
 
@@ -31,24 +33,23 @@
 - token exchange 走注册代理
 - fallback page.url 轮询保底
 
-### 🔄 阶段1 补丁(proofs/Add)— 进行中
-- 任务 019fb826,派给写码 Codex
-- Skip 按钮选择器 `#iShowSkip`(用户提供)
-- 改 getAccountData.py:194-202,加 proofs/Add 检测在 consent 前
+### ✅ 阶段1 补丁(proofs/Add)— 完成(46719b0)
+- 加 proofs/Add 检测在 consent 前,点 `#iShowSkip` 跳过(对应 reg-factory action=Skip)
+- page-OAuth 流程机制完整:authorize→登录→proofs/Add(Skip)→consent→redirect(intercept 抓 code)→token exchange(走代理)
+- 真实效果待批跑实测
 
 ### ⏳ 阶段3(revive_pending)— 待开始
 - 新独立脚本 revive_pending.py
-- HTTP 先 + 重新登录版 intercept 兜底
-- 依赖阶段1 补丁完成(proofs/Add 修复后 page-OAuth 才能用)
+- HTTP 先 + 重新登录版 intercept 兜底(复用 proofs/Add 处理)
+- 17 个 .pending 存量资产
 
 ### ⏳ 阶段4(清理)— 待开始
-- 删 get_token.py
+- 删 get_token.py(Playwright API + 读不存在的 config.json,从未接入)
 
 ## 下一步
 
-1. 等阶段1 补丁实现 → 审核员复审 → 我复核 → commit
-2. 启动阶段3 revive_pending
-3. 阶段4 删 get_token.py
+1. 启动阶段3 revive_pending(HTTP + 浏览器兜底)
+2. 阶段4 删 get_token.py
 
 ## 待用户定的开放问题
 
