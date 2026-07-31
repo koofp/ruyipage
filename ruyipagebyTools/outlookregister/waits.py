@@ -40,11 +40,14 @@ def get_human_iframe_context(page):
 def wait_for_px_captcha_iframe(humanCaptchaIframe, timeout: int = 35) -> bool:
     """在 humanCaptchaIframe 内等 #px-captcha iframe 加载完成。"""
     for _ in range(timeout):
-        ready = humanCaptchaIframe.run_js("""
-        var px = document.getElementById('px-captcha');
-        var f = px ? px.querySelector('iframe') : null;
-        return f && f.contentWindow !== null;
-        """, as_expr=False)
+        try:
+            ready = humanCaptchaIframe.run_js("""
+            var px = document.getElementById('px-captcha');
+            var f = px ? px.querySelector('iframe') : null;
+            return f && f.contentWindow !== null;
+            """, as_expr=False)
+        except Exception:
+            return False
         if ready:
             return True
         print("等待 btnIframe_visible 显示...")

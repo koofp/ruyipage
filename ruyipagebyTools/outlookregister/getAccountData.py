@@ -367,7 +367,7 @@ def save_account_data(page, email, password, proxy=None, output_dir=None):
         print("[getAccountData] pending record saved to {}".format(pending_file))
 
     return {
-        "ok": True,
+        "ok": has_token,
         "email": email,
         "has_graph_token": has_token,
         "record_file": record_file,

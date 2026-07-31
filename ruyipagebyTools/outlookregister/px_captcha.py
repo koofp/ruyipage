@@ -37,6 +37,14 @@ def _get_offsets(page, humanCaptchaIframe) -> tuple[dict, dict, dict]:
     return px_off, hu_off, vs
 
 
+def _human_present(page) -> bool:
+    """Return whether #human still exists after a stale frame."""
+    try:
+        return bool(page.ele("#human", timeout=2))
+    except Exception:
+        return False
+
+
 def handle_captcha(page: FirefoxPage) -> bool:
     """完整 PX 验证流程（含重试）。返回 True=通过, False=失败。"""
 
@@ -51,19 +59,28 @@ def handle_captcha(page: FirefoxPage) -> bool:
 
     # ── 2. wait for #px-captcha iframe ──
     if not wait_for_px_captcha_iframe(humanCaptchaIframe):
+        if not _human_present(page):
+            return True
         print("❌ #px-captcha iframe 未在 35 秒内加载")
         return False
 
     page.wait(1)
 
     # 诊断 #px-captcha 结构
-    px_info = humanCaptchaIframe.run_js("""
-    var px = document.getElementById('px-captcha');
-    if (!px) return 'not found';
-    return {tag: px.tagName, children: px.children.length,
-            hasShadowRoot: !!px.shadowRoot, inner_size: px.innerHTML.length};
-    """, as_expr=False)
-    print("#px-captcha: {}".format(px_info))
+    try:
+        px_info = humanCaptchaIframe.run_js("""
+        var px = document.getElementById('px-captcha');
+        if (!px) return 'not found';
+        return {tag: px.tagName, children: px.children.length,
+                hasShadowRoot: !!px.shadowRoot, inner_size: px.innerHTML.length};
+        """, as_expr=False)
+    except Exception as exc:
+        if not _human_present(page):
+            return True
+        print("PX diag unavailable: {}: {}".format(type(exc).__name__, str(exc)[:120]))
+        px_info = None
+    if px_info:
+        print("#px-captcha: {}".format(px_info))
 
     # ── 3. get visible PX iframe（3 次重试，等待瞬态重建）──
     btnIframe = None
@@ -90,8 +107,14 @@ def handle_captcha(page: FirefoxPage) -> bool:
         (top.get("text") or "")[:50]))
 
     # ── 5. pre-hover cursor into #px-captcha area ──
-    _, hu_off, vs = _get_offsets(page, humanCaptchaIframe)
-    pre_hitbox = get_hitbox(humanCaptchaIframe)
+    try:
+        _, hu_off, vs = _get_offsets(page, humanCaptchaIframe)
+        pre_hitbox = get_hitbox(humanCaptchaIframe)
+    except Exception as exc:
+        if not _human_present(page):
+            return True
+        print("PX pre-hover skipped: {}: {}".format(type(exc).__name__, str(exc)[:120]))
+        pre_hitbox = None
     if pre_hitbox:
         pre_sx = int(vs["x"] + pre_hitbox["cx"] + hu_off["x"])
         pre_sy = int(vs["y"] + pre_hitbox["cy"] + hu_off["y"])
@@ -101,7 +124,13 @@ def handle_captcha(page: FirefoxPage) -> bool:
 
     # ── 6-8. press + poll + retry loop ──
     for attempt in range(3):
-        hitbox = get_hitbox(humanCaptchaIframe)
+        try:
+            hitbox = get_hitbox(humanCaptchaIframe)
+        except Exception as exc:
+            if not _human_present(page):
+                return True
+            print("PX hitbox unavailable: {}: {}".format(type(exc).__name__, str(exc)[:120]))
+            continue
         if not hitbox:
             print("PX hitbox unavailable (attempt {}/3)".format(attempt + 1))
             time.sleep(3)
@@ -111,7 +140,13 @@ def handle_captcha(page: FirefoxPage) -> bool:
         print("attempt {}/3: hitbox center=({}, {})".format(
             attempt + 1, btn_cx, btn_cy))
 
-        px_off, hu_off, vs = _get_offsets(page, humanCaptchaIframe)
+        try:
+            px_off, hu_off, vs = _get_offsets(page, humanCaptchaIframe)
+        except Exception as exc:
+            if not _human_present(page):
+                return True
+            print("PX offsets unavailable: {}: {}".format(type(exc).__name__, str(exc)[:120]))
+            continue
         sx, sy = screen_coords(btn_cx, btn_cy, px_off, hu_off, vs, skip_px_offset=True)
         print("screen=({}, {})".format(sx, sy))
 
@@ -152,6 +187,7 @@ def handle_captcha(page: FirefoxPage) -> bool:
             if not new_btn:
                 print("PX iframe still unavailable after refresh — aborting this attempt")
                 return False
+            continue
         return False
 
     print("PX failed after 3 attempts")

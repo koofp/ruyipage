@@ -27,8 +27,12 @@ def run_once(proxy="http://127.0.0.1:7897"):
             return False, None
         page.wait(1)
         result = save_account_data(page, email, password, proxy=proxy)
-        print(f"✅ 成功: {result['record_file']}")
-        return True, result['record_file']
+        if result["ok"]:
+            print(f"✅ 成功(token 已获取): {result['record_file']}")
+            return True, result["record_file"]
+        print(f"⚠️ 注册成功但未获取 token(记入 .pending): {result['record_file']}")
+        return False, result["record_file"]
+
     finally:
         try:
             page.quit()

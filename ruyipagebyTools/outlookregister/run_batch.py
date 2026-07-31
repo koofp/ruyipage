@@ -2,6 +2,7 @@
 import os
 import sys
 import time
+from collections import deque
 from FirefoxOptions import run_once
 from datetime import datetime
 
@@ -90,12 +91,62 @@ print(f"加载 {len(proxies)} 个代理")
 successes = 0
 attempt = 0
 max_attempts = BATCH_SIZE * 3
+proxies = deque(proxies)
+failure_streak = {}
+
+
+def _classify_exception(exc):
+    """Return proxy_definitive, transport_ambiguous, or application_bug."""
+    name = type(exc).__name__.lower()
+    message = str(exc).lower()
+
+    if (
+        "proxyerror" in name
+        or "proxyerror" in message
+        or "407" in message
+        or "cannot connect to proxy" in message
+        or "remotedisconnected" in message
+    ):
+        return "proxy_definitive"
+
+    if (
+        "timeout" in name
+        or "connectionerror" in name
+        or "geoerror" in name
+        or "bidierror" in name
+        or "timeout" in message
+        or "connectionerror" in message
+        or "no such frame" in message
+        or "browsing context" in message
+        or "page load incomplete" in message
+    ):
+        return "transport_ambiguous"
+
+    return "application_bug"
+
+
+def _sync_proxy_file():
+    if PROXY_MODEL:
+        return
+    with open(PROXY_FILE, "w", encoding="utf-8") as f:
+        for item in proxies:
+            f.write(item + "\n")
+
+
+def _discard_proxy(proxy, reason):
+    failure_streak.pop(proxy, None)
+    print("  移除代理 ({}): {}...".format(reason, proxy[:60]))
+    _sync_proxy_file()
+
 
 while successes < BATCH_SIZE and proxies and attempt < max_attempts:
     attempt += 1
-    idx = (attempt - 1) % len(proxies)
-    proxy = proxies[idx]
-    print(f"\n--- 尝试 #{attempt}（成功 {successes}/{BATCH_SIZE}）节点[{(attempt-1)%len(proxies)}]==>{proxy} ---")
+    proxy = proxies.popleft()
+    print(
+        "\n--- 尝试 #{}(成功 {}/{}) 代理队列剩余 {} ==> {} ---".format(
+            attempt, successes, BATCH_SIZE, len(proxies), proxy
+        )
+    )
 
     # ── Clash 预切 ──
     from urllib.parse import urlparse as _urlparse
@@ -121,14 +172,19 @@ while successes < BATCH_SIZE and proxies and attempt < max_attempts:
     try:
         ok, record = run_once(proxy=proxy)
     except Exception as exc:
-        print(f"  ❌ 异常: {type(exc).__name__}: {str(exc)[:120]}")
-        print(f"  移除代理: {proxy[:60]}...")
-        if proxy in proxies:
-            proxies.remove(proxy)
-        if not PROXY_MODEL:
-            with open(PROXY_FILE, "w", encoding="utf-8") as f:
-                for p in proxies:
-                    f.write(p + "\n")
+        category = _classify_exception(exc)
+        print(f"  ❌ 异常[{category}]: {type(exc).__name__}: {str(exc)[:120]}")
+        if category == "transport_ambiguous":
+            streak = failure_streak.get(proxy, 0) + 1
+            failure_streak[proxy] = streak
+            if streak >= 3:
+                _discard_proxy(proxy, "transport streak {}/3".format(streak))
+            else:
+                print("  代理保留并轮转: transport streak {}/3".format(streak))
+                proxies.append(proxy)
+        else:
+            _discard_proxy(proxy, category)
+
         if not proxies:
             print("❌ 所有代理已用完，停止")
             break
@@ -137,10 +193,22 @@ while successes < BATCH_SIZE and proxies and attempt < max_attempts:
         continue
 
     if ok:
+        failure_streak.pop(proxy, None)
         successes += 1
         print(f"  ✅ 成功 {successes}/{BATCH_SIZE}")
+        proxies.append(proxy)
+    elif record:
+        print(f"  ⚠️ 注册成功但无 token: {record}，留给 pending revive")
+        proxies.append(proxy)
     else:
-        print(f"  ❌ PX 或注册失败，不保存")
+        streak = failure_streak.get(proxy, 0) + 1
+        failure_streak[proxy] = streak
+        if streak >= 3:
+            _discard_proxy(proxy, "px-fail streak {}/3".format(streak))
+        else:
+            print("  PX 失败,代理保留轮转: streak {}/3".format(streak))
+            proxies.append(proxy)
+
 
     if successes < BATCH_SIZE and proxies:
         time.sleep(FIREFOX_QUIT_WAIT)
