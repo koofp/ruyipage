@@ -9,7 +9,7 @@
 | **1 补丁** | _extract_graph_via_page 加 proofs/Add Skip 处理 | ✅ 完成 | `46719b0` |
 | **2** | run_batch 异常分类 + deque 防错位 + 方案乙(PX 失败增 streak) | ✅ 完成 | `ca4466d` |
 | **3** | revive_pending.py 复活 .pending(HTTP + 浏览器兜底) | ⏳ 待开始 | - |
-| **4** | 删 get_token.py | ⏳ 待开始 | - |
+| **4** | 删 get_token.py | ✅ 完成 | - |
 
 ---
 

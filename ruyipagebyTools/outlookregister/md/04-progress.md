@@ -2,7 +2,7 @@
 
 ## 当前状态(2026-07-31)
 
-**下一步**:阶段3 revive_pending.py 复活 .pending(HTTP + 浏览器兜底)。
+**全部阶段完成** ✅ 修复计划闭环。剩余:真实批跑实测验证(待用户跑)。
 
 **已完成并 commit**:
 
@@ -12,6 +12,8 @@
 | `fb248be` | 阶段1 | getAccountData.py | +106 / -74 |
 | `46719b0` | 阶段1补丁(proofs/Add Skip) | getAccountData.py | +6 / -0 |
 | `f9948df` | 文档 | md/ 7 文件 | +413 / -0 |
+| `57d1f2d` | 阶段3 P0 | revive_pending.py | +234 / -0 |
+| `8dc3cf0` | 文档同步 | md/02,03,04 | +15 / -25 |
 
 ## 阶段进度
 
@@ -38,18 +40,21 @@
 - page-OAuth 流程机制完整:authorize→登录→proofs/Add(Skip)→consent→redirect(intercept 抓 code)→token exchange(走代理)
 - 真实效果待批跑实测
 
-### ⏳ 阶段3(revive_pending)— 待开始
-- 新独立脚本 revive_pending.py
-- HTTP 先 + 重新登录版 intercept 兜底(复用 proofs/Add 处理)
-- 17 个 .pending 存量资产
+### ✅ 阶段3 P0(revive_pending)— 完成(57d1f2d)
+- 新独立脚本 revive_pending.py(HTTP-only)
+- fresh sticky Kookeey 代理 + 原子幂等落盘 + attempt 限制 + 幀等 rerun
+- 17 个 .pending 存量资产可复活
 
-### ⏳ 阶段4(清理)— 待开始
-- 删 get_token.py(Playwright API + 读不存在的 config.json,从未接入)
+### ✅ 阶段4(清理)— 完成
+- 删 get_token.py(Playwright API + 读不存在的 config.json,从未接入,全仓无引用)
+- 其"重新登录+监听抓code"思路已被阶段1 intercept 吸收
 
 ## 下一步
 
-1. 启动阶段3 revive_pending(HTTP + 浏览器兜底)
-2. 阶段4 删 get_token.py
+修复计划全部闭环。剩余:
+1. 真实批跑 `run_batch.py` 实测 PX 通过率 + token 成功率(阶段0/1/2 效果验证)
+2. 跑 `revive_pending.py` 实测 .pending 复活率(阶段3 效果验证)
+3. 若 page-OAuth intercept 抓不到导航 redirect(风险点1),fallback page.url 兜底;若 HTTP 对 .pending 某些账号不行,再考虑 P1 浏览器兜底
 
 ## 待用户定的开放问题
 
