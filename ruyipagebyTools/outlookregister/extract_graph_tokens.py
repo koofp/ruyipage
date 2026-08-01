@@ -21,3 +21,7 @@ _mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
 
 get_graph_token = _mod.get_graph_token
+# Expose the loaded reg-factory module so callers (e.g. getAccountData's
+# _extract_graph_via_http) can patch its global `requests` to swap the
+# Session class without touching reg-factory's source.
+reg_factory_module = _mod

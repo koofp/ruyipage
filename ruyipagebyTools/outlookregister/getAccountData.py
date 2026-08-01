@@ -14,8 +14,47 @@
 import json
 import os
 import time
+import types
+import urllib.parse
 from datetime import datetime, timezone
-from extract_graph_tokens import get_graph_token
+import requests
+from extract_graph_tokens import get_graph_token, reg_factory_module
+
+
+# ---------------------------------------------------------------------------
+# localhost redirect 安全 Session（方案5）
+# ---------------------------------------------------------------------------
+class SafeRedirectSession(requests.Session):
+    """覆写 get_redirect_target：当重定向目标是 localhost callback（含
+    code=/error=）时返回 None，让 requests 不自动 follow——把原始 302
+    response 返回给调用方（reg-factory 的 128-150 手动 loop 据此提 code）。
+
+    背景：reg-factory 的 credentials POST（:111）等用 allow_redirects=True，
+    微软 redirect 到 http://localhost/?code=... 时 requests 自动 follow，经
+    Kookeey 代理发 localhost 请求会 ProxyError，code 明明在 URL 却拿不到。
+    本类只在 localhost callback 时不 follow，其他 redirect 正常放行。
+    """
+
+    def get_redirect_target(self, resp):
+        target = super().get_redirect_target(resp)
+        if target:
+            host = (urllib.parse.urlparse(target).hostname or "").lower()
+            if host in ("localhost", "127.0.0.1") and ("code=" in target or "error=" in target):
+                return None
+        return target
+
+
+def _patched_requests_module():
+    """构造一个 fake `requests` 模块：Session=SafeRedirectSession，其余属性
+    透传真 requests（reg-factory 仅用 requests.Session，但透传保证向前兼容）。
+    用于临时注入 reg-factory 模块的 globals，使其 `requests.Session()` 实际
+    拿到 SafeRedirectSession。"""
+    fake = types.ModuleType("requests")
+    for name in dir(requests):
+        if name not in ("Session",):
+            setattr(fake, name, getattr(requests, name))
+    fake.Session = SafeRedirectSession
+    return fake
 
 # ---------------------------------------------------------------------------
 # 常量
@@ -282,37 +321,50 @@ def _extract_graph_via_page(page, email, password, proxy=None):
 
 def _extract_graph_via_http(email, password, proxy=None, attempts=3):
     """按 reg-factory 的 3 次退避策略提取 Graph refresh token（HTTP 方式，作为回退）。"""
-    for attempt in range(attempts):
-        try:
-            # NOTE: reg-factory's get_graph_token() does not accept a proxy
-            # parameter. We pass the proxy via environment variables, which is
-            # safe in serial execution but would need explicit session-level
-            # config for concurrent use. The finally block clears the vars.
-            if proxy:
-                os.environ["HTTP_PROXY"] = str(proxy)
-                os.environ["HTTPS_PROXY"] = str(proxy)
-            graph = get_graph_token(email, password)
-        except Exception as exc:
-            graph = None
-            print("[getAccountData] HTTP graph attempt {}/{} error: {}: {}".format(
-                attempt + 1, attempts, type(exc).__name__, exc
-            ))
-        finally:
-            if proxy:
-                os.environ.pop("HTTP_PROXY", None)
-                os.environ.pop("HTTPS_PROXY", None)
+    # 方案5：临时把 reg-factory 模块全局的 requests 换成 SafeRedirectSession
+    # 版，使 localhost callback 不被 requests 自动 follow（否则经 Kookeey
+    # 代理发 localhost 会 ProxyError，code 拿不到）。串行执行无需锁；finally
+    # restore 保证不泄漏。并发场景需加锁。
+    _orig_requests = reg_factory_module.__dict__.get("requests")
+    _fake_requests = _patched_requests_module()
+    reg_factory_module.__dict__["requests"] = _fake_requests
+    try:
+        for attempt in range(attempts):
+            try:
+                # NOTE: reg-factory's get_graph_token() does not accept a proxy
+                # parameter. We pass the proxy via environment variables, which is
+                # safe in serial execution but would need explicit session-level
+                # config for concurrent use. The finally block clears the vars.
+                if proxy:
+                    os.environ["HTTP_PROXY"] = str(proxy)
+                    os.environ["HTTPS_PROXY"] = str(proxy)
+                graph = get_graph_token(email, password)
+            except Exception as exc:
+                graph = None
+                print("[getAccountData] HTTP graph attempt {}/{} error: {}: {}".format(
+                    attempt + 1, attempts, type(exc).__name__, exc
+                ))
+            finally:
+                if proxy:
+                    os.environ.pop("HTTP_PROXY", None)
+                    os.environ.pop("HTTPS_PROXY", None)
 
-        if graph and graph.get("refresh_token"):
-            return graph
+            if graph and graph.get("refresh_token"):
+                return graph
 
-        if attempt < attempts - 1:
-            print("[getAccountData] HTTP graph attempt {}/{} missing; retrying.".format(
-                attempt + 1, attempts
-            ))
-            time.sleep(3 * (attempt + 1))
+            if attempt < attempts - 1:
+                print("[getAccountData] HTTP graph attempt {}/{} missing; retrying.".format(
+                    attempt + 1, attempts
+                ))
+                time.sleep(3 * (attempt + 1))
 
-    print("[getAccountData] HTTP graph token missing after {} attempts.".format(attempts))
-    return None
+        print("[getAccountData] HTTP graph token missing after {} attempts.".format(attempts))
+        return None
+    finally:
+        if _orig_requests is not None:
+            reg_factory_module.__dict__["requests"] = _orig_requests
+        else:
+            reg_factory_module.__dict__.pop("requests", None)
 
 
 def _extract_graph_for_account(page, email, password, proxy=None):
