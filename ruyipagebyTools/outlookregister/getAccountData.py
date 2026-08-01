@@ -132,6 +132,7 @@ def _extract_graph_via_page(page, email, password, proxy=None):
     import requests
     import secrets
     import string
+    import time
     import urllib.parse
 
     CLIENT_ID = "9e5f94bc-e8a4-4e73-b8be-63364c29d753"
@@ -191,7 +192,9 @@ def _extract_graph_via_page(page, email, password, proxy=None):
 
         # The registration browser session is already authenticated. Do not
         # re-enter credentials; only grant consent when Microsoft asks for it.
-        for _ in range(30):
+        # Both browser polling phases share one monotonic 30-second deadline.
+        _deadline = time.monotonic() + 30.0
+        while time.monotonic() < _deadline:
             if captured["url"]:
                 break
             skip_btn = page.ele('#iShowSkip', timeout=1)
@@ -221,7 +224,7 @@ def _extract_graph_via_page(page, email, password, proxy=None):
         # not surface this top-level redirect through interception.
         if not redirect_url:
             print("[getAccountData] page OAuth: intercept timed out; falling back to page.url")
-            for _ in range(40):
+            while time.monotonic() < _deadline:
                 url = page.url or ""
                 if "localhost" in url and "code=" in url:
                     redirect_url = url
@@ -313,14 +316,12 @@ def _extract_graph_via_http(email, password, proxy=None, attempts=3):
 
 
 def _extract_graph_for_account(page, email, password, proxy=None):
-    """方案 B：page OAuth 优先 → HTTP 回退。"""
-    # 第一步：page OAuth（一次机会，浏览器内操作）
-    result = _extract_graph_via_page(page, email, password, proxy=proxy)
+    """HTTP-first, with page OAuth as a bounded browser-session fallback."""
+    result = _extract_graph_via_http(email, password, proxy=proxy)
     if result and result.get("refresh_token"):
         return result
-    print("[getAccountData] page OAuth failed, falling back to HTTP extractor...")
-    # 第二步：HTTP 回退
-    return _extract_graph_via_http(email, password, proxy=proxy)
+    print("[getAccountData] HTTP failed, falling back to page OAuth...")
+    return _extract_graph_via_page(page, email, password, proxy=proxy)
 
 
 # ---------------------------------------------------------------------------
