@@ -24,8 +24,8 @@ ruyipage/                        ← 底层库(Firefox + WebDriver BiDi,v1.2.54)
         ├── px_probe.py           ← PX 探测 JS
         ├── win32_mouse.py        ← Win32 原生鼠标按压
         ├── clash_helper.py       ← Clash 节点选择
-        ├── getAccountData.py     ← 账号数据保存 + token 提取
-        ├── get_token.py          ← 游离参考代码(Playwright API,未接入)
+        ├── getAccountData.py     ← 账号数据保存 + token 提取(HTTP-first + page-OAuth 兜底)
+        ├── revive_pending.py      ← 复活 .pending(HTTP-only,新文件)
         ├── extract_graph_tokens.py ← 桥接 reg-factory
         ├── check_proxies.py      ← 代理检测
         ├── common/kookeey_api.py ← Kookeey 代理 API
@@ -44,15 +44,19 @@ run_batch.py(批量调度,deque+异常分类)
   └─ FirefoxOptions.run_once(proxy)        ← 单次注册
        ├─ config.create_page()              启动 Firefox + 代理 + 打开 signup.live.com
        ├─ register_flow.fill_form()         邮箱→密码→生日→姓名 表单自动化
-       ├─ px_captcha.handle_captcha()       PX 验证总调度
+       ├─ px_captcha.handle_captcha()       PX 验证总调度(stale-frame 保护 + 3 次重试)
        │    ├─ waits: 等待 #human iframe
        │    ├─ waits: 等待 #px-captcha iframe(stale-frame 保护)
        │    ├─ px_probe: JS 探测挑战元素 + hitbox
        │    ├─ win32_mouse: Win32 SendInput OS 级长按 12-15s
        │    └─ waits: 轮询 PX 结果(passed/retry/timeout)
        └─ getAccountData.save_account_data()  账号落盘
-            ├─ _extract_graph_via_page()   ← 阶段1:intercept 捕 code + 走代理 + proofs/Add Skip
-            └─ _extract_graph_via_http()   ← reg-factory HTTP 回退
+            └─ _extract_graph_for_account()  ← 阶段5:HTTP-first → page-OAuth 兜底(共享 30s deadline)
+                 ├─ _extract_graph_via_http()   reg-factory 纯 HTTP(主路径,实测更稳)
+                 └─ _extract_graph_via_page()   page-OAuth 兜底(intercept 捕 code + proofs/Add Skip)
+
+revive_pending.py(离线复活 .pending,HTTP-only)
+  └─ 遍历 .pending/*.json → fresh sticky Kookeey 代理 → _extract_graph_via_http → 移入 pool
 ```
 
 ## 关键设计

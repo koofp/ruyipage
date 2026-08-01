@@ -1,8 +1,8 @@
 # 04 - 执行进度
 
-## 当前状态(2026-07-31)
+## 当前状态(2026-08-01)
 
-**全部阶段完成** ✅ 修复计划闭环。剩余:真实批跑实测验证(待用户跑)。
+**全部阶段完成** ✅ 修复计划闭环。实测验证通过(run_batch 1/1 + revive 2/3)。
 
 **已完成并 commit**:
 
@@ -14,10 +14,12 @@
 | `f9948df` | 文档 | md/ 7 文件 | +413 / -0 |
 | `57d1f2d` | 阶段3 P0 | revive_pending.py | +234 / -0 |
 | `8dc3cf0` | 文档同步 | md/02,03,04 | +15 / -25 |
+| `1a545aa` | 阶段4 | 删 get_token.py + md/02,04 | +15 / -10 |
+| `4a0bd8b` | 阶段5(实测优化) | getAccountData.py | +9 / -8 |
 
 ## 阶段进度
 
-### ✅ 阶段0(PX 验证 + token 成功语义)— 完成
+### ✅ 阶段0(PX 验证 + token 成功语义)— 完成(ca4466d)
 - #4 PX 重试死循环 → continue
 - timeout 方案甲(retry 重试,timeout 不重试)
 - D stale-frame 保护(93/104/114/68-73)
@@ -29,33 +31,48 @@
 - _classify_exception 三分类
 - 方案乙:PX 失败代理增 streak
 
-### ✅ 阶段1(token 机制)— 完成(fb248be)
+### ✅ 阶段1(token 机制)— 完成(fb248be + 46719b0)
 - intercept 捕获 code(替代 page.url 轮询)
 - 不填密码只 consent(复用会话)
 - token exchange 走注册代理
 - fallback page.url 轮询保底
-
-### ✅ 阶段1 补丁(proofs/Add)— 完成(46719b0)
-- 加 proofs/Add 检测在 consent 前,点 `#iShowSkip` 跳过(对应 reg-factory action=Skip)
-- page-OAuth 流程机制完整:authorize→登录→proofs/Add(Skip)→consent→redirect(intercept 抓 code)→token exchange(走代理)
-- 真实效果待批跑实测
+- 补丁:proofs/Add Skip(`#iShowSkip`)
 
 ### ✅ 阶段3 P0(revive_pending)— 完成(57d1f2d)
 - 新独立脚本 revive_pending.py(HTTP-only)
-- fresh sticky Kookeey 代理 + 原子幂等落盘 + attempt 限制 + 幀等 rerun
-- 17 个 .pending 存量资产可复活
+- fresh sticky Kookeey 代理 + 原子幂等落盘 + attempt 限制 + 幂等 rerun
+- 实测:17 个 .pending,--limit 3 跑出 2 成功 1 Abuse 封号
 
-### ✅ 阶段4(清理)— 完成
+### ✅ 阶段4(清理)— 完成(1a545aa)
 - 删 get_token.py(Playwright API + 读不存在的 config.json,从未接入,全仓无引用)
-- 其"重新登录+监听抓code"思路已被阶段1 intercept 吸收
 
-## 下一步
+### ✅ 阶段5(实测优化)— 完成(4a0bd8b)
+- HTTP-first 调换优先级(实测 HTTP 更稳更快)
+- page-OAuth 共享 monotonic 30s deadline
+- Abuse/proofs reason 降级(reg-factory 无可识别信号)
+
+## 实测验证结果(2026-08-01)
+
+### run_batch BATCH_SIZE=1
+- 尝试#1 jjeoue3c7ataxi:PX 3 次 retry 全失败,streak 1/3 保留(方案乙+PX 重试生效)
+- 尝试#2 ddosbhdpftyjy4:PX passed → page-OAuth intercept 失效(问题A)→ fallback page.url 超时 → HTTP 回退 → proofs skip→denied(问题B)→ retry consent → OK → ✅ 成功 1/1
+- 修复点全验证:#4 重试、stale 不冒泡、成功语义、异常分类、deque、proofs/Add skip
+
+### revive_pending --limit 3
+- e3acoxutgdza6i:HTTP attempt1 proofs skip→denied,attempt2 consent→OK(成功)
+- fnvtsj5jozbnt:同上(成功)
+- fcibxnlap7ozob:3 次 Abuse 封号(失败)
+- summary: success:2, failed:1
+
+## 下一步(可选,非代码工作)
 
 修复计划全部闭环。剩余:
-1. 真实批跑 `run_batch.py` 实测 PX 通过率 + token 成功率(阶段0/1/2 效果验证)
-2. 跑 `revive_pending.py` 实测 .pending 复活率(阶段3 效果验证)
-3. 若 page-OAuth intercept 抓不到导航 redirect(风险点1),fallback page.url 兜底;若 HTTP 对 .pending 某些账号不行,再考虑 P1 浏览器兜底
+1. 跑 `revive_pending.py` 全量复活剩余 .pending(14 个)
+2. 跑 `run_batch.py` 验证阶段5 后 token 成功率 + 速度提升
+3. `.env` BATCH_SIZE 测试时改成了 1,实测后改回 5
 
-## 待用户定的开放问题
+## 已知运行时问题(非阻断,见 03-issues.md)
 
-- **scope 升级?** `Mail.Read` → `offline_access Mail.ReadWrite Mail.Send User.Read`(取决于下游用途,待用户定)
+- 问题 A(intercept 在 PX 后失效):阶段5 已用 HTTP-first 规避
+- 问题 B(OAuth 首次必失败):reg-factory 既有行为,降级
+- 问题 C(Abuse 封号):不可救,attempt 限制已处理

@@ -59,14 +59,23 @@ proofs/Add 页 Skip 按钮:
 ```
 浏览器版用 `page.ele('#iShowSkip').click_self()` 点它跳过(对应 HTTP 版 action=Skip)。
 
-## 修复方向
+## 修复方向(已完成)
 
-`_extract_graph_via_page` 等代码循环(194-202)加 proofs/Add 检测(放 consent 前):
-```python
-skip_btn = page.ele('#iShowSkip', timeout=1)
-if skip_btn:
-    skip_btn.click_self()  # 跳过绑定邮箱
-    continue
-consent_btn = page.ele('[data-testid="appConsentPrimaryButton"]', timeout=1)
-...
-```
+`_extract_graph_via_page` 等代码循环(194-202)加 proofs/Add 检测(放 consent 前)→ 阶段1补丁(46719b0)已实现。
+
+## 阶段5 实测优化(4a0bd8b)
+
+基于真实批跑日志 + Codex 研讨:
+- **HTTP-first 调换**:`_extract_graph_for_account` 从 page 先→HTTP 兜底,反转为 HTTP 先→page 兜底。实测 HTTP 成功率更高(page-OAuth 0 成功,全靠 HTTP 兜底)。
+- **page-OAuth 共享 30s deadline**:两个轮询循环共享 `time.monotonic()` 30s 预算,保证 page 兜底有界。
+- **降级**:Abuse 早跳过 / proofs reason 不实现(reg-factory 无可识别信号)。
+
+## 三条路径最终定位(阶段5 后)
+
+| 路径 | 角色 | 信任度 | 实测成功率 |
+|---|---|:---:|---|
+| HTTP(reg-factory) | **主路径**(HTTP-first) | 中 | 高(实测 2/3,1 Abuse 非机制问题) |
+| page-OAuth(intercept+proofs/Add Skip) | **兜底**(HTTP 失败才跑,有界 30s) | 高 | 0(PX 后 intercept 失效,问题A) |
+| 开浏览器重新登录 | 未实现(P1,revive 兜底备用) | - | - |
+
+> 实测结论:HTTP 是当前最可靠的主路径;page-OAuth 因 PX 后 intercept 失效(问题A)暂不可靠,留作有界兜底。
