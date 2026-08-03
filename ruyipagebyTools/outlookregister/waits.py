@@ -127,14 +127,19 @@ def poll_px_result(page, humanCaptchaIframe, rounds: int = 6) -> str:
             print("r{}: frame unavailable, retrying".format(rnd + 1))
             continue
 
+        # 分支日志保留按钮文本和提示状态，便于区分按压无效与机器人判定。
         if st.get("l"):
+            print("r{}: LOADING (progress bar detected)".format(rnd + 1))
             time.sleep(8)
             return "loading"
         if st.get("a"):
+            print("r{}: RETRY (aria again hint), btn_text={!r}".format(
+                rnd + 1, st.get("t")))
             return "retry"
         if st.get("p"):
-            # PX button is still present without loading/retry hints —
-            # treat as implicit retry: PX reset the button, wants another press.
+            # PX 按钮仍存在且没有 loading/again 提示：视为隐式重试。
+            print("r{}: RETRY (button present, no hint), btn_text={!r}".format(
+                rnd + 1, st.get("t")))
             return "retry"
         print("r{}: pressed={} loading={} retry={}".format(
             rnd + 1, st.get("p"), st.get("l"), st.get("a")))

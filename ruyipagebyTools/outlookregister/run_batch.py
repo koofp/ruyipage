@@ -2,6 +2,7 @@
 import os
 import sys
 import time
+import requests
 from collections import deque
 from FirefoxOptions import run_once
 from datetime import datetime
@@ -90,6 +91,7 @@ print(f"加载 {len(proxies)} 个代理")
 
 successes = 0
 attempt = 0
+probe_skip = 0
 max_attempts = BATCH_SIZE * 3
 proxies = deque(proxies)
 failure_streak = {}
@@ -133,18 +135,96 @@ def _sync_proxy_file():
             f.write(item + "\n")
 
 
+def _mask_proxy(proxy):
+    """脱敏代理 URL，只保留协议和 host:port，隐藏 user:password。"""
+    try:
+        from urllib.parse import urlsplit
+        parsed = urlsplit(str(proxy))
+        host = parsed.hostname or ""
+        port = parsed.port or ""
+        scheme = parsed.scheme or "socks5h"
+        return "{}://***:***@{}:{}".format(scheme, host, port)
+    except Exception:
+        return "***:***@(proxy)"
+
+
 def _discard_proxy(proxy, reason):
     failure_streak.pop(proxy, None)
-    print("  移除代理 ({}): {}...".format(reason, proxy[:60]))
+    print("  移除代理 ({}): {}".format(reason, _mask_proxy(proxy)))
     _sync_proxy_file()
 
 
-while successes < BATCH_SIZE and proxies and attempt < max_attempts:
-    attempt += 1
+def _probe_proxy(proxy):
+    """注册前预检代理；返回 (是否可用, 失败分类)。"""
+    proxy_map = {"http": proxy, "https": proxy}
+    for probe_attempt in range(2):
+        try:
+            response = requests.get(
+                "https://api.ipify.org?format=json",
+                proxies=proxy_map,
+                timeout=8,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            if not isinstance(payload, dict) or not payload.get("ip"):
+                raise ValueError("ipify response missing ip")
+            print("  ✅ 代理预检通过")
+            return True, "ok"
+        except Exception as exc:
+            name = type(exc).__name__
+            message = str(exc).lower()
+            is_ssl_error = isinstance(exc, requests.exceptions.SSLError)
+            certificate_failure = is_ssl_error and (
+                "certificate verify failed" in message
+                or "certificate_verify_failed" in message
+            )
+            transient_ssl = is_ssl_error and (
+                "ssleoferror" in message
+                or "unexpected_eof" in message
+                or "unexpected eof" in message
+                or "handshake" in message
+            )
+            proxy_definitive = (
+                isinstance(exc, requests.exceptions.ProxyError)
+                or certificate_failure
+                or "cannot connect" in message
+                or "407" in message
+                or "remotedisconnected" in message
+                or "proxyerror" in message
+            )
+            if proxy_definitive:
+                # 确定性代理/TLS 错误直接丢弃，不白开浏览器。
+                print("  ❌ 代理预检失败[代理坏]: {}".format(name))
+                return False, "代理坏"
+            if probe_attempt == 0:
+                # EOF/握手中断、超时及其他瞬态错误再试 1 次，避免误杀好代理。
+                failure_kind = "TLS 瞬态" if transient_ssl else "瞬态网络"
+                print("  ⚠️ 代理预检{}失败: {}，重试 1 次".format(
+                    failure_kind, name))
+                time.sleep(1)
+                continue
+            print("  ❌ 代理预检失败[瞬态网络连续失败]: {}".format(name))
+            return False, "瞬态网络连续失败"
+    return False, "未知预检失败"
+
+
+while (successes < BATCH_SIZE and proxies and attempt < max_attempts
+       and probe_skip < max_attempts):
     proxy = proxies.popleft()
+    probe_ok, probe_reason = _probe_proxy(proxy)
+    if not probe_ok:
+        probe_skip += 1
+        _discard_proxy(proxy, "代理预检: {}".format(probe_reason))
+        if not proxies:
+            print("❌ 所有代理预检均失败，停止")
+            break
+        print("  换下一个代理，剩余: {}".format(len(proxies)))
+        continue
+
+    attempt += 1
     print(
         "\n--- 尝试 #{}(成功 {}/{}) 代理队列剩余 {} ==> {} ---".format(
-            attempt, successes, BATCH_SIZE, len(proxies), proxy
+            attempt, successes, BATCH_SIZE, len(proxies), _mask_proxy(proxy)
         )
     )
 
@@ -173,7 +253,7 @@ while successes < BATCH_SIZE and proxies and attempt < max_attempts:
         ok, record = run_once(proxy=proxy)
     except Exception as exc:
         category = _classify_exception(exc)
-        print(f"  ❌ 异常[{category}]: {type(exc).__name__}: {str(exc)[:120]}")
+        print(f"  ❌ 异常[{category}]: {type(exc).__name__}")
         if category == "transport_ambiguous":
             streak = failure_streak.get(proxy, 0) + 1
             failure_streak[proxy] = streak

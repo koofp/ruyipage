@@ -60,3 +60,5 @@ ruyipagebyTools/outlookregister/outlook_no_graph.txt
 
 
 ruyipagebyTools/outlookregister/_logs
+ruyipagebyTools/outlookregister/.env
+ruyipagebyTools/outlookregister/.env.local

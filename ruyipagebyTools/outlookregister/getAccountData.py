@@ -47,9 +47,11 @@ _last_classification: ContextVar = ContextVar("_last_classification", default=No
 def get_last_classification():
     """返回最近一次 _extract_graph_via_http 的终态分类，供落盘/跨run止损用。
 
-    结构：{"terminal": bool, "type": "success"|"denied"|"abuse"|"retryable",
-           "denied_count": int, "attempts": int}。terminal=True 表示微软账号态
-    决定的不可救失败（denied-3x 或 Abuse），revive 应跳过不再重试。
+    结构：{"terminal": bool,
+           "type": "success"|"denied"|"abuse"|"dead-line"|"retryable",
+           "denied_count": int, "net_streak": int, "attempts": int}。
+    dead-line 只是同一代理线路连续失败的观测值，非账号终态；terminal=True
+    仅表示 denied-3x 或 Abuse，revive 应跳过不再重试。
     """
     return _last_classification.get()
 
@@ -451,6 +453,7 @@ def _extract_graph_via_http(email, password, proxy=None, attempts=3):
     _token = None
     _tr_token = None
     _deny_streak = 0
+    _net_streak = 0
     _last_terminal = None
     try:
         _token = _current_email.set(email)
@@ -468,8 +471,13 @@ def _extract_graph_via_http(email, password, proxy=None, attempts=3):
                 # safe in serial execution but would need explicit session-level
                 # config for concurrent use. The finally block clears the vars.
                 if proxy:
-                    os.environ["HTTP_PROXY"] = str(proxy)
-                    os.environ["HTTPS_PROXY"] = str(proxy)
+                    _http_proxy = str(proxy)
+                    # requests/urllib3 用 socks5h 表示 SOCKS5 代理侧 DNS；旧 socks5
+                    # 地址统一升级，避免本地解析后出现 TLS EOF。
+                    if _http_proxy.lower().startswith("socks5://"):
+                        _http_proxy = "socks5h://" + _http_proxy[len("socks5://"):]
+                    os.environ["HTTP_PROXY"] = _http_proxy
+                    os.environ["HTTPS_PROXY"] = _http_proxy
                 graph = get_graph_token(email, password)
             except Exception as exc:
                 graph = None
@@ -490,7 +498,8 @@ def _extract_graph_via_http(email, password, proxy=None, attempts=3):
             ))
             if graph and graph.get("refresh_token"):
                 _last_classification.set({"terminal": False, "type": "success",
-                                          "attempts": attempt + 1, "denied_count": _deny_streak})
+                                          "attempts": attempt + 1, "denied_count": _deny_streak,
+                                          "net_streak": _net_streak})
                 return graph
 
             # 终态分类止损（方案A）：denied/abuse 是微软账号态决定，重试不变。
@@ -501,15 +510,21 @@ def _extract_graph_via_http(email, password, proxy=None, attempts=3):
                 break
             if _terminal and str(_terminal).startswith("denied"):
                 _deny_streak += 1
+                _net_streak = 0  # 账号态信号优先，网络连续失败重新计数
                 _last_terminal = _terminal
                 if _deny_streak >= 3:
                     _observe_log("  [getAccountData] terminal: denied×{}（微软账号态拒绝，停止重试）".format(_deny_streak))
                     break
                 _observe_log("  [getAccountData] denied streak {}/3（继续重试，微软两步式 consent 概率）".format(_deny_streak))
+            elif _terminal == "retryable-network":
+                # 网络错误只累计线路连续失败，不打断已观察到的 denied 计数
+                _net_streak += 1
+                if _net_streak >= 3:
+                    _observe_log("  [getAccountData] retryable-network streak {}（线路连续失败，停止重试）".format(_net_streak))
+                    break
             else:
-                # retryable-network（代理偶断）/ 无信号（missing 但无 localhost denied）
-                if _deny_streak > 0:
-                    _deny_streak = 0  # 非终态失败，重置 deny streak
+                # 无信号（missing 但无 localhost denied）会打断连续网络失败
+                _net_streak = 0
 
             if attempt < attempts - 1:
                 _observe_log("  [getAccountData] HTTP graph attempt {}/{} missing; retrying.".format(
@@ -517,15 +532,19 @@ def _extract_graph_via_http(email, password, proxy=None, attempts=3):
                 ))
                 time.sleep(3 * (attempt + 1))
 
+        _net_dead = _net_streak >= 3
         _classification = {
-            "terminal": _last_terminal in ("abuse",) or (
-                _last_terminal and str(_last_terminal).startswith("denied") and _deny_streak >= 3
-            ),
+            # dead-line 是代理线路观测值，账号本身仍可换代理重试。
+            "terminal": (_last_terminal == "abuse"
+                         or (_last_terminal and str(_last_terminal).startswith("denied")
+                             and _deny_streak >= 3)),
             "type": ("abuse" if _last_terminal == "abuse"
-                     else ("denied" if (_last_terminal and str(_last_terminal).startswith("denied"))
-                           else "retryable")),
+                     else ("denied" if (_last_terminal and str(_last_terminal).startswith("denied")
+                                        and _deny_streak >= 3)
+                           else ("dead-line" if _net_dead else "retryable"))),
             "attempts": attempt + 1,
             "denied_count": _deny_streak,
+            "net_streak": _net_streak,
             "last_terminal": _last_terminal,
         }
         _last_classification.set(_classification)
@@ -634,11 +653,17 @@ def save_account_data(page, email, password, proxy=None, output_dir=None):
         # 终态分类（方案A）：区分"不可救(terminal)"vs"可重试(retryable)"
         classification = get_last_classification() or {}
         terminal = classification.get("terminal", False)
-        pending_data["_no_token_reason"] = (
-            "terminal: {} (微软账号态决定，不可重试)".format(classification.get("type"))
-            if terminal
-            else "graph token missing (retryable: 代理/网络/概率)"
-        )
+        classification_type = classification.get("type")
+        if terminal and classification_type == "dead-line":
+            pending_data["_no_token_reason"] = (
+                "terminal: dead-line (代理线路连续失败，非账号态)")
+        elif terminal:
+            pending_data["_no_token_reason"] = (
+                "terminal: {} (微软账号态决定，不可重试)".format(
+                    classification_type))
+        else:
+            pending_data["_no_token_reason"] = (
+                "graph token missing (retryable: 代理/网络/概率)")
         pending_data["_terminal"] = terminal
         pending_data["_classification"] = classification
         pending_data["_saved_at"] = ts
