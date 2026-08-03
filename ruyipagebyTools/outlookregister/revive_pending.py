@@ -17,6 +17,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 POOL_DIR = SCRIPT_DIR / "_outlook_pool"
 PENDING_DIR = POOL_DIR / ".pending"
 EMAILS_FILE = SCRIPT_DIR / "emails.txt"
+PROXY_FILE = SCRIPT_DIR / "proxies_ok.txt"  # 本地代理文件 fallback（同 run_batch）
 DEFAULT_PROXY = "http://127.0.0.1:7897"
 MAX_ATTEMPTS = 3
 
@@ -28,6 +29,7 @@ from getAccountData import (  # noqa: E402
     _extract_graph_via_http,
     _safe_filename,
     _write_json_atomic,
+    get_last_classification,
 )
 
 
@@ -49,16 +51,39 @@ def _load_env(path: Path) -> None:
             os.environ.setdefault(key, value.strip('"').strip("'"))
 
 
+def _load_local_proxies():
+    """读 proxies_ok.txt 的本地代理列表（PROXY_MODEL=false 时 run_batch 用同一个）。
+
+    用于 revive 的代理 fallback：Kookeey API 失败/不稳时，优先用本地代理，
+    再退到 Clash 直连。空文件/不存在返回 []。
+    """
+    proxies = []
+    if not PROXY_FILE.is_file():
+        return proxies
+    try:
+        with PROXY_FILE.open(encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    proxies.append(line)
+    except OSError:
+        pass
+    return proxies
+
+
 def _make_proxy_provider():
     """Return a fresh-proxy callable and its source label.
 
+    优先级：Kookeey 提取代理 > 本地 proxies_ok.txt（轮转） > Clash 直连。
     Kookeey API creation is deferred until after pending files are discovered;
     importing this script therefore remains safe when no credentials are set.
+    本地代理 fallback 绕开 Kookeey 站点不稳/SSL 失败（W4）。
     """
     access_id = os.environ.get("KOOKEY_ACCESS_ID", "").strip()
     token = os.environ.get("KOOKEY_TOKEN", "").strip()
     country = os.environ.get("AUTO_COUNTRY", "JP").strip().upper()
     fallback = os.environ.get("CLASH_PROXY", DEFAULT_PROXY).strip() or DEFAULT_PROXY
+    local_proxies = _load_local_proxies()
 
     api = None
     if access_id and token:
@@ -68,6 +93,9 @@ def _make_proxy_provider():
             api = KookeeyAPI(access_id, token)
         except Exception as exc:
             print("[revive] Kookeey unavailable: {}: {}".format(type(exc).__name__, exc))
+
+    # 本地代理轮转游标（只在 fallback 时用，非线程安全；revive 是串行）
+    _local_idx = [0]
 
     def fresh_proxy():
         if api is not None:
@@ -84,6 +112,12 @@ def _make_proxy_provider():
                 print("[revive] Kookeey proxy generation failed: {}: {}".format(
                     type(exc).__name__, exc
                 ))
+        # fallback 1：本地 proxies_ok.txt（若有）
+        if local_proxies:
+            p = local_proxies[_local_idx[0] % len(local_proxies)]
+            _local_idx[0] += 1
+            return p, "local-file"
+        # fallback 2：Clash 直连
         return fallback, "clash-fallback"
 
     return fresh_proxy
@@ -152,6 +186,13 @@ def _revive_one(path: Path, fresh_proxy) -> str:
             print("[revive] {} exhausted ({}/{})".format(email, attempts, MAX_ATTEMPTS))
             return "exhausted"
 
+        # 方案A 终态止损：若上次已判定 terminal（denied×3 或 abuse），
+        # 微软账号态决定的不可救失败，跳过不再重试，省代理/时间。
+        if pending.get("_terminal"):
+            ctype = (pending.get("_classification") or {}).get("type", "?")
+            print("[revive] {} SKIP: terminal={}（微软账号态，不再重试）".format(email, ctype))
+            return "terminal-skip"
+
         if _finish_existing_pending(path, email, password):
             return "recovered-existing"
 
@@ -161,7 +202,13 @@ def _revive_one(path: Path, fresh_proxy) -> str:
         ))
         graph = _extract_graph_via_http(email, password, proxy=proxy)
         if not graph or not graph.get("refresh_token"):
-            raise RuntimeError("HTTP extractor returned no refresh_token")
+            # 读终态分类（方案A）：terminal 的不再计 attempts（下次会 terminal-skip）
+            classification = get_last_classification() or {}
+            terminal = classification.get("terminal", False)
+            raise RuntimeError(
+                "HTTP extractor returned no refresh_token"
+                + (" (terminal:{})".format(classification.get("type")) if terminal else "")
+            )
 
         now = datetime.now(timezone.utc).astimezone()
         timestamp = now.strftime("%Y%m%d_%H%M%S")
@@ -198,6 +245,18 @@ def _revive_one(path: Path, fresh_proxy) -> str:
     except Exception as exc:
         try:
             record = locals().get("pending") or _read_json(path)
+            # 方案A：terminal 的不增 _revive_attempts（下次直接 terminal-skip）
+            classification = get_last_classification() or {}
+            terminal = classification.get("terminal", False)
+            if terminal:
+                record["_terminal"] = True
+                record["_classification"] = classification
+                record["_no_token_reason"] = "terminal: {} (微软账号态，不可重试)".format(
+                    classification.get("type"))
+                _write_json_atomic(str(path), record)
+                print("[revive] FAILED(terminal) {}: {} [已标记不再重试]".format(
+                    path.name, exc))
+                return "terminal"
             _mark_failure(path, record, "HTTP", "{}: {}".format(type(exc).__name__, exc))
         except Exception as mark_exc:
             print("[revive] failed to update {}: {}".format(path.name, mark_exc))
@@ -221,7 +280,10 @@ def main() -> int:
         return 0
 
     fresh_proxy = _make_proxy_provider()
-    counts = {"success": 0, "failed": 0, "exhausted": 0, "recovered-existing": 0}
+    counts = {
+        "success": 0, "failed": 0, "exhausted": 0,
+        "recovered-existing": 0, "terminal-skip": 0, "terminal": 0,
+    }
     for path in paths:
         outcome = _revive_one(path, fresh_proxy)
         counts[outcome] = counts.get(outcome, 0) + 1

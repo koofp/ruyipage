@@ -13,17 +13,67 @@
 
 import json
 import os
+import threading
 import time
 import types
 import urllib.parse
+from contextvars import ContextVar
 from datetime import datetime, timezone
 import requests
 from extract_graph_tokens import get_graph_token, reg_factory_module
 
 
 # ---------------------------------------------------------------------------
-# localhost redirect 安全 Session（方案5）
+# 观测层 + localhost redirect 安全 Session（方案5 同机制）
 # ---------------------------------------------------------------------------
+# ContextVar 标记当前正在提取哪个账号 —— reg-factory 每次 attempt 内的
+# 所有 HTTP 请求都被 SafeRedirectSession 捕获，记到 .observe/{email}.log。
+# 纯加日志，不改 token 逻辑，不改 reg-factory 源码（用方案5 的 globals 注入）。
+_OBSERVE_DIR = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "_outlook_pool", ".observe"
+)
+_current_email: ContextVar = ContextVar("_current_email_for_observe", default="")
+_obs_lock = threading.Lock()
+
+# 终态信号（方案5 同机制，ContextVar 在 reg-factory 的 request 内被 set，
+# 调用方在 get_graph_token 返回后读取）。一次 attempt 内被覆写多次无妨，
+# 取最后值。_extract_graph_via_http 每 attempt reset，跨 attempt 收集后判定。
+# _last_classification：一次 _extract_graph_via_http 调用结束后的终态分类，
+# 供 save_account_data / revive_pending 读取（denied-3x / abuse → terminal）。
+_terminal_reason: ContextVar = ContextVar("_terminal_reason", default=None)
+_last_classification: ContextVar = ContextVar("_last_classification", default=None)
+
+
+def get_last_classification():
+    """返回最近一次 _extract_graph_via_http 的终态分类，供落盘/跨run止损用。
+
+    结构：{"terminal": bool, "type": "success"|"denied"|"abuse"|"retryable",
+           "denied_count": int, "attempts": int}。terminal=True 表示微软账号态
+    决定的不可救失败（denied-3x 或 Abuse），revive 应跳过不再重试。
+    """
+    return _last_classification.get()
+
+
+def _observe_log(line):
+    """把一行观测记录同时打到 stdout 和 .observe/{email}.log。"""
+    email = _current_email.get()
+    try:
+        print(line)
+    except Exception:
+        pass
+    if not email:
+        return
+    try:
+        with _obs_lock:
+            os.makedirs(_OBSERVE_DIR, exist_ok=True)
+            safe = email.replace("/", "_").replace("\\", "_")
+            path = os.path.join(_OBSERVE_DIR, "{}.log".format(safe))
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+    except Exception:
+        pass
+
+
 class SafeRedirectSession(requests.Session):
     """覆写 get_redirect_target：当重定向目标是 localhost callback（含
     code=/error=）时返回 None，让 requests 不自动 follow——把原始 302
@@ -33,15 +83,85 @@ class SafeRedirectSession(requests.Session):
     微软 redirect 到 http://localhost/?code=... 时 requests 自动 follow，经
     Kookeey 代理发 localhost 请求会 ProxyError，code 明明在 URL 却拿不到。
     本类只在 localhost callback 时不 follow，其他 redirect 正常放行。
-    """
+
+    观测层（方案5 同机制，纯加日志）：覆写 request() 记录 reg-factory 发出的
+    每条请求 method+url，以及 requests 自动 follow 的每跳 redirect（resp.history
+    里的 3xx + Location），失败时记异常。所有记录走 _observe_log 落盘到
+    .observe/{email}.log，供事后判定 H1(必须绑)/H2(概率)/H3(丢状态)/I2(Abuse)/
+    W4(代理)。仅记日志，不干预请求本身。"""
+
+    def request(self, method, url, *args, **kwargs):
+        method_upper = str(method).upper()
+        try:
+            resp = super().request(method, url, *args, **kwargs)
+        except Exception as exc:
+            _observe_log("      [REQ-ERR] {} {} -> {}: {}".format(
+                method_upper, _short_url(url), type(exc).__name__, str(exc)[:200]
+            ))
+            # 代理/网络失败分类为 retryable（除非 body 已明确 abuse，见下）
+            if _terminal_reason.get() is None:
+                _terminal_reason.set("retryable-network")
+            raise
+        # 记录 requests 自动 follow 的每跳 redirect（resp.history 是 3xx 序列）
+        for hop in getattr(resp, "history", []) or []:
+            loc = hop.headers.get("Location", "")
+            _observe_log("      [REDIR] {} {} -> {} {}".format(
+                hop.status_code, _short_url(hop.url), hop.status_code,
+                ("Location=" + _short_url(loc)) if loc else "(no Location)"
+            ))
+        _observe_log("      [RESP] {} {} -> {}".format(
+            method_upper, _short_url(url), resp.status_code
+        ))
+        # Abuse 页分类（proofs/Add 后回到 Abuse，不可救）
+        url_lower = (url or "").lower()
+        if "account.live.com/abuse" in url_lower:
+            _terminal_reason.set("abuse")
+            _observe_log("      [TERMINAL] Abuse 页（微软封号，不可救）")
+        return resp
 
     def get_redirect_target(self, resp):
         target = super().get_redirect_target(resp)
         if target:
             host = (urllib.parse.urlparse(target).hostname or "").lower()
             if host in ("localhost", "127.0.0.1") and ("code=" in target or "error=" in target):
+                # localhost callback：不 follow，把原始 302 返回给 reg-factory 手动 loop
+                _observe_log("      [CALLBACK-STOP] 302 Location=localhost?code=/error= -> 不 follow(方案5)")
+                # 解析 localhost?error=... 的 error 值（如 access_denied）
+                if "error=" in target:
+                    try:
+                        params = urllib.parse.parse_qs(
+                            urllib.parse.urlparse(target).query
+                        )
+                        err = (params.get("error", [None]) or [None])[0]
+                        if err:
+                            _terminal_reason.set("denied:{}".format(err))
+                            _observe_log("      [TERMINAL] localhost?error={}（微软账号态拒绝）".format(err))
+                    except Exception:
+                        _terminal_reason.set("denied:unknown-error")
                 return None
         return target
+
+
+def _short_url(url):
+    """把超长 query（epct/epctrc 等几 KB 字段）截短，日志可读。"""
+    if not url:
+        return "(empty)"
+    s = str(url)
+    if len(s) <= 160:
+        return s
+    try:
+        parsed = urllib.parse.urlparse(s)
+    except Exception:
+        return s[:160] + "...(trunc)"
+    q = parsed.query
+    if len(q) > 80:
+        q = q[:80] + "...(trunc {}B)".format(len(q))
+    base = "{}://{}{}".format(parsed.scheme, parsed.netloc, parsed.path)
+    if q:
+        base += "?" + q
+    if parsed.fragment:
+        base += "#" + parsed.fragment[:40]
+    return base
 
 
 def _patched_requests_module():
@@ -328,8 +448,20 @@ def _extract_graph_via_http(email, password, proxy=None, attempts=3):
     _orig_requests = reg_factory_module.__dict__.get("requests")
     _fake_requests = _patched_requests_module()
     reg_factory_module.__dict__["requests"] = _fake_requests
+    _token = None
+    _tr_token = None
+    _deny_streak = 0
+    _last_terminal = None
     try:
+        _token = _current_email.set(email)
+        _tr_token = _terminal_reason.set(None)
+        _observe_log(
+            "  ── HTTP attempt 链路开始: {} proxy={} ──".format(email, proxy or "(no proxy)")
+        )
         for attempt in range(attempts):
+            # 每 attempt reset 终态信号（reg-factory 的 request 内会 set）
+            _terminal_reason.set(None)
+            _observe_log("  ── attempt {}/{} ──".format(attempt + 1, attempts))
             try:
                 # NOTE: reg-factory's get_graph_token() does not accept a proxy
                 # parameter. We pass the proxy via environment variables, which is
@@ -341,7 +473,7 @@ def _extract_graph_via_http(email, password, proxy=None, attempts=3):
                 graph = get_graph_token(email, password)
             except Exception as exc:
                 graph = None
-                print("[getAccountData] HTTP graph attempt {}/{} error: {}: {}".format(
+                _observe_log("  [getAccountData] HTTP graph attempt {}/{} error: {}: {}".format(
                     attempt + 1, attempts, type(exc).__name__, exc
                 ))
             finally:
@@ -349,18 +481,63 @@ def _extract_graph_via_http(email, password, proxy=None, attempts=3):
                     os.environ.pop("HTTP_PROXY", None)
                     os.environ.pop("HTTPS_PROXY", None)
 
+            # 读 attempt 终态信号（denied:<err> / abuse / retryable-network / None）
+            _terminal = _terminal_reason.get()
+            _observe_log("  [getAccountData] attempt {} result: {}{}".format(
+                attempt + 1,
+                "refresh_token=yes" if (graph and graph.get("refresh_token")) else "missing",
+                (" terminal={}".format(_terminal)) if _terminal else ""
+            ))
             if graph and graph.get("refresh_token"):
+                _last_classification.set({"terminal": False, "type": "success",
+                                          "attempts": attempt + 1, "denied_count": _deny_streak})
                 return graph
 
+            # 终态分类止损（方案A）：denied/abuse 是微软账号态决定，重试不变。
+            # attempt1 3x 全 denied 的账号加更多 attempt 也一样 denied。
+            if _terminal == "abuse":
+                _last_terminal = "abuse"
+                _observe_log("  [getAccountData] terminal: Abuse（封号，停止重试）")
+                break
+            if _terminal and str(_terminal).startswith("denied"):
+                _deny_streak += 1
+                _last_terminal = _terminal
+                if _deny_streak >= 3:
+                    _observe_log("  [getAccountData] terminal: denied×{}（微软账号态拒绝，停止重试）".format(_deny_streak))
+                    break
+                _observe_log("  [getAccountData] denied streak {}/3（继续重试，微软两步式 consent 概率）".format(_deny_streak))
+            else:
+                # retryable-network（代理偶断）/ 无信号（missing 但无 localhost denied）
+                if _deny_streak > 0:
+                    _deny_streak = 0  # 非终态失败，重置 deny streak
+
             if attempt < attempts - 1:
-                print("[getAccountData] HTTP graph attempt {}/{} missing; retrying.".format(
+                _observe_log("  [getAccountData] HTTP graph attempt {}/{} missing; retrying.".format(
                     attempt + 1, attempts
                 ))
                 time.sleep(3 * (attempt + 1))
 
-        print("[getAccountData] HTTP graph token missing after {} attempts.".format(attempts))
+        _classification = {
+            "terminal": _last_terminal in ("abuse",) or (
+                _last_terminal and str(_last_terminal).startswith("denied") and _deny_streak >= 3
+            ),
+            "type": ("abuse" if _last_terminal == "abuse"
+                     else ("denied" if (_last_terminal and str(_last_terminal).startswith("denied"))
+                           else "retryable")),
+            "attempts": attempt + 1,
+            "denied_count": _deny_streak,
+            "last_terminal": _last_terminal,
+        }
+        _last_classification.set(_classification)
+        _observe_log("  [getAccountData] HTTP graph token missing after {} attempts. classification={}".format(
+            attempts, _classification
+        ))
         return None
     finally:
+        if _tr_token is not None:
+            _terminal_reason.reset(_tr_token)
+        if _token is not None:
+            _current_email.reset(_token)
         if _orig_requests is not None:
             reg_factory_module.__dict__["requests"] = _orig_requests
         else:
@@ -451,11 +628,22 @@ def save_account_data(page, email, password, proxy=None, output_dir=None):
         os.makedirs(pending_dir, exist_ok=True)
         pending_file = os.path.join(pending_dir, "{}.json".format(safe_email))
         pending_data = dict(record)
-        pending_data["_no_token_reason"] = "graph token missing after 3 attempts"
+        # 终态分类（方案A）：区分"不可救(terminal)"vs"可重试(retryable)"
+        classification = get_last_classification() or {}
+        terminal = classification.get("terminal", False)
+        pending_data["_no_token_reason"] = (
+            "terminal: {} (微软账号态决定，不可重试)".format(classification.get("type"))
+            if terminal
+            else "graph token missing (retryable: 代理/网络/概率)"
+        )
+        pending_data["_terminal"] = terminal
+        pending_data["_classification"] = classification
         pending_data["_saved_at"] = ts
         _write_json_atomic(pending_file, pending_data)
         record_file = pending_file
-        print("[getAccountData] pending record saved to {}".format(pending_file))
+        print("[getAccountData] pending record saved{}: {}".format(
+            " (terminal:{})".format(classification.get("type")) if terminal else "", pending_file
+        ))
 
     return {
         "ok": has_token,
