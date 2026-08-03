@@ -69,7 +69,7 @@ if PROXY_MODEL:
         count=BATCH_SIZE * 2,
         country_code=AUTO_COUNTRY,
         sticky=False,
-        protocol="http",
+        protocol="socks5h",
     )
     print(f"✅ API 生成 {len(proxies)} 个 {AUTO_COUNTRY} 代理")
 else:

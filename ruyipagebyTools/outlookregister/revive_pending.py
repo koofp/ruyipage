@@ -104,7 +104,7 @@ def _make_proxy_provider():
                     count=1,
                     country_code=country,
                     sticky=True,
-                    protocol="http",
+                    protocol="socks5h",
                 )
                 if generated:
                     return generated[0], "kookeey"

@@ -493,6 +493,6 @@ if __name__ == "__main__":
         raise SystemExit("Set KOOKEY_TOKEN before running this example.")
 
     api = KookeeyAPI(access_id, token)
-    proxies = api.fetch_proxies(count=5, geo_id=GEO_MAP["JP"], protocol="http")
+    proxies = api.fetch_proxies(count=5, geo_id=GEO_MAP["JP"], protocol="socks5h")
     for proxy in proxies:
         print(proxy)
