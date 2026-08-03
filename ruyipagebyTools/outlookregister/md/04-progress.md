@@ -1,11 +1,10 @@
 # 04 - 执行进度
 
-## 当前状态(2026-08-01)
+## 当前状态(2026-08-02)
 
-**全部阶段完成** ✅ 修复计划闭环。实测验证通过(run_batch 1/1 + revive 2/3)。
+**方案5 + 观测层 + 方案A/C 完成**。诊断实证方案5 端到端成功(c5dcuyhycznlf 拿 token),根因定到**微软账号态分叉**(denied vs Consent,非代码)。
 
-**已完成并 commit**:
-
+**已完成 commit(截至 2ffd2d5)**:
 | commit | 阶段 | 文件 | insertions/deletions |
 |---|---|---|---|
 | `ca4466d` | 阶段0 + 阶段2 | px_captcha.py, waits.py, getAccountData.py, FirefoxOptions.py, run_batch.py | +142 / -31 |
@@ -16,6 +15,13 @@
 | `8dc3cf0` | 文档同步 | md/02,03,04 | +15 / -25 |
 | `1a545aa` | 阶段4 | 删 get_token.py + md/02,04 | +15 / -10 |
 | `4a0bd8b` | 阶段5(实测优化) | getAccountData.py | +9 / -8 |
+| `2ffd2d5` | 方案5(SafeRedirectSession) | getAccountData.py, extract_graph_tokens.py | +85 / -29 |
+
+**未提交(2026-08-02 诊断改动)**:
+- 观测层 + 方案A(终态分类止损):getAccountData.py(SafeRedirectSession.request/get_redirect_target 加终态检测 + _terminal_reason/_last_classification ContextVar + _extract_graph_via_http 止损逻辑 + save_account_data 落 _terminal)
+- 方案C(revive 本地代理 fallback):revive_pending.py(_load_local_proxies + _make_proxy_provider 三级 fallback + _revive_one terminal-skip/terminal 分类)
+- _diag_observe.py / _diag6_observe.py(诊断驱动脚本)
+- md/03-issues.md, md/04-progress.md(本文档 + 根因判定)
 
 ## 阶段进度
 

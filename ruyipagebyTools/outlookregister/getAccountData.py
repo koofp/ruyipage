@@ -545,12 +545,15 @@ def _extract_graph_via_http(email, password, proxy=None, attempts=3):
 
 
 def _extract_graph_for_account(page, email, password, proxy=None):
-    """HTTP-first, with page OAuth as a bounded browser-session fallback."""
-    result = _extract_graph_via_http(email, password, proxy=proxy)
-    if result and result.get("refresh_token"):
-        return result
-    print("[getAccountData] HTTP failed, falling back to page OAuth...")
-    return _extract_graph_via_page(page, email, password, proxy=proxy)
+    """纯 HTTP 提取 Graph refresh token（与旧版 881721d 完全一致）。
+
+    控制变量法结论：旧版只调 get_graph_token（reg-factory 纯 HTTP），成功率高。
+    我们加 page-OAuth 兜底后成功率下降 —— 兜底会触发浏览器内完整 OAuth
+    （真实 PX + 登录 + 绑定/信息收集），风控与失败率上升。故去掉 page-OAuth，
+    token 路径回到纯 HTTP（方案5 仅规避 localhost follow，不改变 HTTP 主路径）。
+    page 参数保留仅用于签名兼容（save_account_data 仍传），实际不用于 token。
+    """
+    return _extract_graph_via_http(email, password, proxy=proxy)
 
 
 # ---------------------------------------------------------------------------
@@ -578,12 +581,12 @@ def save_account_data(page, email, password, proxy=None, output_dir=None):
     pool_dir = output_dir
     os.makedirs(pool_dir, exist_ok=True)
 
-    # 1. Graph token：page OAuth 优先 → HTTP 回退（先提取，后导出 cookie）
+    # 1. Graph token：纯 HTTP（与旧版 881721d 一致；无 page-OAuth 兜底）
     graph = _extract_graph_for_account(page, email, password, proxy=proxy)
     has_token = bool(graph and graph.get("refresh_token"))
     print("[getAccountData] graph token: {}".format("OK" if has_token else "MISSING"))
 
-    # 2. Cookie（page OAuth 可能新增/更新 Microsoft cookie，token 后导出）
+    # 2. Cookie（token 后导出，保留注册会话的 Microsoft cookie）
     cookies = _export_cookies(page)
     print("[getAccountData] exported {} microsoft-related cookies".format(len(cookies)))
 

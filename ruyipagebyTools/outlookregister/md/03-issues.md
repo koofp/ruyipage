@@ -82,6 +82,54 @@ attempt2: accepting Consent/Update → got auth code → OK
 
 | # | 问题 | 说明 |
 |---|---|---|
-| A | HTTP auto-redirect 到 localhost 致 ProxyError | reg-factory/extract_graph_tokens.py:58/111/122 allow_redirects=True,但 reg-factory 不可改 |
-| Abuse 早识别 | reg-factory 对 Abuse 返回 None 无信号 | 需改 reg-factory 本体,不在范围 |
-| proofs reason | reg-factory proofs skip→denied 无 reason 信号 | 同上 |
+| A | HTTP auto-redirect 到 localhost 致 ProxyError | reg-factory/extract_graph_tokens.py:58/111/122 allow_redirects=True,但 reg-factory 不可改。**方案5(2ffd2d5)已在 wrapper 侧 SafeRedirectSession 规避** |
+| Abuse 早识别 | reg-factory 对 Abuse 返回 None 无信号 | 需改 reg-factory 本体,不在范围。**观测层已识别 Abuse URL(方案A),止损不重试** |
+| proofs reason | reg-factory proofs skip→denied 无 reason 信号 | 同上。**观测层已解析 localhost?error=access_denied(方案A),止损不重试** |
+
+---
+
+## 方案5 闭环实证(2026-08-02 诊断)
+
+- **机制验证**:SafeRedirectSession 的 `[CALLBACK-STOP] 不 follow(方案5)` 在每个 attempt 都正常触发(`.observe/*.log`)。
+- **端到端实证**:`c5dcuyhycznlf@outlook.com` attempt2 成功拿 token(`refresh_token` 417 字符,落 pool + emails.txt,pending 已清)。**这是方案5 commit(2ffd2d5)之后第一次端到端成功**,确认方案5 没有把事搞坏。
+- **观测层**:`getAccountData` 加 SafeRedirectSession.request() 记录 reg-factory 每条 HTTP(method+url+status+redirect 轨迹),落 `.observe/{email}.log`。ContextVar 标当前账号。纯加日志,不改 token 逻辑,不改 reg-factory。
+
+## 根因判定:H1/H2/H3 → **微软账号态分叉(非代码)**
+
+观测轨迹(3 账号逐 attempt 切分)推翻了之前三个假设,定到真因:
+
+| 账号 | attempt 轨迹 | 终态 | 判定 |
+|---|---|---|---|
+| c5dcuyhycznlf | proofs→Skip→302→**Consent/Update→ucaction=Yes→code**→换 token 时代理 RemoteDisconnected | attempt2 成功 | 能到 Consent 就稳 |
+| oeyr2cmtagrhk | proofs→Skip→302→**oauth20_authorize?error=access_denied**(回 authorize 带 denied),3 次全 | terminal denied | 微软账号态拒绝 |
+| rhdubgslftxash | 同 oeyr2cmtagrhk(3 次全 denied) | terminal denied | 同上 |
+
+**关键分叉点 = proofs/Add 之后落到哪:**
+- **Consent/Update** → 拿 code → 换 token(成功,代理偶断可重试覆盖)
+- **oauth20_authorize?error=access_denied** → denied(失败,微软账号态决定,重试不变)
+
+**H1(必须绑邮箱)被推翻**:rhdubgslftxash 的 Skip POST 返回 302(正常被接受),不是停在 proofs/Add。它失败原因和 oeyr2cmtagrhk 完全一样(denied),**不是"必须绑"导致卡死**。
+
+**H2(概率)部分成立**:c5dcuyhycznlf attempt1 已拿 code,只代理偶断;attempt2 同流程成功。说明 denied 不是随机的(3 次全 denied = 账号态),Consent 类是稳的。
+
+**H3(丢状态)被推翻**:不是 Session 丢 cookie,是微软账号态分叉。
+
+## 方案A:终态分类止损(已实现)
+
+- `SafeRedirectSession.get_redirect_target` 检测 `localhost?error=` 解析 error 值 → `_terminal_reason` ContextVar set `denied:access_denied`
+- `request()` 检测 `account.live.com/Abuse` URL → set `abuse`
+- `_extract_graph_via_http`:denied 连续 3 次 / abuse → break 不重试 + 带出 classification
+- `save_account_data` / `revive_pending` 把 `_terminal=True` 写入 pending,下次 `terminal-skip` 不再重试
+
+**效果**:denied/abuse 账号不浪费 attempt/代理;只对 retryable(代理偶断/网络)重试。
+
+## 方案C:revive 本地代理 fallback(已实现)
+
+- `revive_pending._make_proxy_provider` 代理优先级:Kookeey > `proxies_ok.txt`(本地轮转)> Clash 直连
+- 绕开 Kookeey 站点不稳/SSL(W4),复用 run_batch 的 `PROXY_FILE`
+
+## 真实天花板(基于这次数据)
+
+- 能到 Consent 的账号 → 大概率成功(代理偶断可重试)
+- proofs→denied 账号 → 不可救(微软账号态,重试无效,方案A 止损)
+- .pending 池子是"微软不让过"子集,denied 可能占多数 → 真实成功率有限,非代码能提升
