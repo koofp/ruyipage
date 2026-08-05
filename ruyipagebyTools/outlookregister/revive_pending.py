@@ -200,7 +200,12 @@ def _revive_one(path: Path, fresh_proxy) -> str:
         print("[revive] HTTP attempt {}/{}: {} via {}".format(
             attempts + 1, MAX_ATTEMPTS, email, proxy_source
         ))
-        graph = _extract_graph_via_http(email, password, proxy=proxy)
+        graph = _extract_graph_via_http(
+            email,
+            password,
+            proxy=proxy,
+            proxy_provider=lambda: fresh_proxy()[0],
+        )
         if not graph or not graph.get("refresh_token"):
             # 读终态分类（方案A）：terminal 的不再计 attempts（下次会 terminal-skip）
             classification = get_last_classification() or {}

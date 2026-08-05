@@ -441,7 +441,17 @@ def _extract_graph_via_page(page, email, password, proxy=None):
                 pass
 
 
-def _extract_graph_via_http(email, password, proxy=None, attempts=3):
+def _proxy_session_label(proxy):
+    """仅返回代理 session 后 6 位，不泄露账号密码。"""
+    try:
+        password = urllib.parse.urlsplit(str(proxy or "")).password or ""
+        session = password.rsplit("-", 1)[-1]
+        return "session:{}".format(session[-6:] if session else "unknown")
+    except Exception:
+        return "session:unknown"
+
+
+def _extract_graph_via_http(email, password, proxy=None, attempts=3, proxy_provider=None):
     """按 reg-factory 的 3 次退避策略提取 Graph refresh token（HTTP 方式，作为回退）。"""
     # 方案5：临时把 reg-factory 模块全局的 requests 换成 SafeRedirectSession
     # 版，使 localhost callback 不被 requests 自动 follow（否则经 Kookeey
@@ -455,6 +465,26 @@ def _extract_graph_via_http(email, password, proxy=None, attempts=3):
     _deny_streak = 0
     _net_streak = 0
     _last_terminal = None
+    _proxy_switch_attempted = False
+
+    def _build_classification(attempts_used):
+        # dead-line 只是代理线路观测值，账号本身仍可换代理重试。
+        net_dead = _net_streak >= 3
+        denied_terminal = bool(
+            _last_terminal and str(_last_terminal).startswith("denied")
+            and _deny_streak >= 3
+        )
+        return {
+            "terminal": _last_terminal == "abuse" or denied_terminal,
+            "type": ("abuse" if _last_terminal == "abuse"
+                     else ("denied" if denied_terminal
+                           else ("dead-line" if net_dead else "retryable"))),
+            "attempts": attempts_used,
+            "denied_count": _deny_streak,
+            "net_streak": _net_streak,
+            "last_terminal": _last_terminal,
+        }
+
     try:
         _token = _current_email.set(email)
         _tr_token = _terminal_reason.set(None)
@@ -526,27 +556,50 @@ def _extract_graph_via_http(email, password, proxy=None, attempts=3):
                 # 无信号（missing 但无 localhost denied）会打断连续网络失败
                 _net_streak = 0
 
+            # 第 2 次 attempt 结束后，仅纯网络错且 denied=0 时换 1 次代理。
+            if (attempt == 1 and attempts >= 3 and proxy_provider is not None
+                    and not _proxy_switch_attempted):
+                provisional = _build_classification(attempt + 1)
+                can_switch = (
+                    not provisional["terminal"]
+                    and provisional["denied_count"] == 0
+                    and provisional["type"] in ("dead-line", "retryable")
+                )
+                if can_switch:
+                    _proxy_switch_attempted = True
+                    try:
+                        new_proxy = proxy_provider()
+                    except Exception as exc:
+                        new_proxy = None
+                        _observe_log(
+                            "  [getAccountData] 换代理失败: {}".format(
+                                type(exc).__name__)
+                        )
+                    if new_proxy and str(new_proxy) != str(proxy):
+                        old_label = _proxy_session_label(proxy)
+                        proxy = str(new_proxy)
+                        new_label = _proxy_session_label(proxy)
+                        _net_streak = 0  # 新线路重新计算连续网络失败
+                        _observe_log(
+                            "  [getAccountData] 换代理重试（纯网络错，denied=0）：{} → {}".format(
+                                old_label, new_label)
+                        )
+                    elif new_proxy:
+                        _observe_log(
+                            "  [getAccountData] 换代理跳过：provider 返回了相同代理"
+                        )
+                    else:
+                        _observe_log(
+                            "  [getAccountData] 换代理跳过：provider 未返回可用代理"
+                        )
+
             if attempt < attempts - 1:
                 _observe_log("  [getAccountData] HTTP graph attempt {}/{} missing; retrying.".format(
                     attempt + 1, attempts
                 ))
                 time.sleep(3 * (attempt + 1))
 
-        _net_dead = _net_streak >= 3
-        _classification = {
-            # dead-line 是代理线路观测值，账号本身仍可换代理重试。
-            "terminal": (_last_terminal == "abuse"
-                         or (_last_terminal and str(_last_terminal).startswith("denied")
-                             and _deny_streak >= 3)),
-            "type": ("abuse" if _last_terminal == "abuse"
-                     else ("denied" if (_last_terminal and str(_last_terminal).startswith("denied")
-                                        and _deny_streak >= 3)
-                           else ("dead-line" if _net_dead else "retryable"))),
-            "attempts": attempt + 1,
-            "denied_count": _deny_streak,
-            "net_streak": _net_streak,
-            "last_terminal": _last_terminal,
-        }
+        _classification = _build_classification(attempt + 1)
         _last_classification.set(_classification)
         _observe_log("  [getAccountData] HTTP graph token missing after {} attempts. classification={}".format(
             attempts, _classification
