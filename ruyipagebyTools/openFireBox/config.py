@@ -9,7 +9,7 @@ from ruyipage import FirefoxOptions, FirefoxPage
 
 @dataclass
 class Settings:
-    browser_path: str = r"D:\EXED\10_brower\firefox-151.0a1.en-US.win64-20260728\firefox\firefox.exe"
+    browser_path: str = r"D:\EXED\10_brower\firefox-155.0a1.en-US.win64-20260801\firefox\firefox.exe"
     port: int = 12000
     headless: bool = False
     width: int = 1440
