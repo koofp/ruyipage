@@ -198,7 +198,7 @@ python examples/45_js_setter_untrusted_input.py
 from ruyipage import FirefoxOptions, FirefoxPage
 
 opts = FirefoxOptions()
-opts.set_browser_path(r"D:\EXED\10_brower\firefox-151.0a1.en-US.win64-20260728\firefox\firefox.exe")
+opts.set_browser_path(r"D:\EXED\10_brower\firefox-155.0a1.en-US.win64-20260801\firefox\firefox.exe")
 opts.set_user_dir(r"D:\ruyipage_userdir")
 
 page = FirefoxPage(opts)
@@ -218,7 +218,7 @@ page.quit()
 from ruyipage import launch
 
 page = launch(
-    browser_path=r"D:\EXED\10_brower\firefox-151.0a1.en-US.win64-20260728\firefox\firefox.exe",
+    browser_path=r"D:\EXED\10_brower\firefox-155.0a1.en-US.win64-20260801\firefox\firefox.exe",
     user_dir=r"D:\ruyipage_userdir",
     headless=False,
     close_on_exit=True,
@@ -246,7 +246,7 @@ page.quit()
 from ruyipage import FirefoxOptions, FirefoxPage
 
 opts = FirefoxOptions()
-opts.set_browser_path(r"D:\EXED\10_brower\firefox-151.0a1.en-US.win64-20260728\firefox\firefox.exe")
+opts.set_browser_path(r"D:\EXED\10_brower\firefox-155.0a1.en-US.win64-20260801\firefox\firefox.exe")
 opts.set_user_dir(r"D:\ruyipage_userdir")
 opts.set_proxy("http://127.0.0.1:7890")
 opts.set_window_size(1440, 900)
@@ -697,7 +697,7 @@ for item in page.eles("css:#b_results > li.b_algo"):
 from ruyipage import FirefoxOptions, FirefoxPage
 
 opts = FirefoxOptions()
-opts.set_browser_path(r"D:\EXED\10_brower\firefox-151.0a1.en-US.win64-20260728\firefox\firefox.exe")
+opts.set_browser_path(r"D:\EXED\10_brower\firefox-155.0a1.en-US.win64-20260801\firefox\firefox.exe")
 opts.set_fpfile(r"C:\fingerprints\profile1.txt")
 
 page = FirefoxPage(opts)
